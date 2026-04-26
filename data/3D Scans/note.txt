@@ -1,0 +1,1 @@
+Find scan in PLY inputs, removed to save space
