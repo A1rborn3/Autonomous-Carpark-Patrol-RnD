@@ -7,7 +7,7 @@
 *.env
 *.kml
 *.venv
-
+*.pyc
 # User-specific files
 *.rsuser
 *.suo
