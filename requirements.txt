@@ -2,3 +2,4 @@ open3d
 numpy
 opencv-python
 simplekml
+Pillow
