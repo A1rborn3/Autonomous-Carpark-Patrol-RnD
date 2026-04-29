@@ -58,6 +58,36 @@ def process_single_file(input_path, args):
 
     print(f"Finished processing {filename}. Results in {output_dir}")
 
+import re
+
+def parse_coordinate(coord_str):
+    """Parses a coordinate string which could be a float or DMS format."""
+    coord_str = str(coord_str).strip()
+    
+    # Try direct float conversion first
+    try:
+        return float(coord_str)
+    except ValueError:
+        pass
+        
+    # Clean up common copy-paste errors from Google Earth
+    # e.g. "36°54 32.03S 174948 35.90"
+    coord_str = coord_str.upper().replace('"', '').replace("'", ' ')
+    coord_str = re.sub(r'[°º]', ' ', coord_str)
+    
+    # Extract numbers and hemisphere
+    # Matches: "36 54 32.03 S" or "36 54 32.03S"
+    match = re.search(r'(\d+)\s+(\d+)\s+([\d\.]+)\s*([NSEW])', coord_str)
+    
+    if match:
+        deg, min_val, sec, hemi = match.groups()
+        dd = float(deg) + (float(min_val) / 60) + (float(sec) / 3600)
+        if hemi in ['S', 'W']:
+            dd = -dd
+        return round(dd, 8)
+        
+    raise ValueError(f"Could not parse coordinate: {coord_str}")
+
 def get_interactive_args(args):
     """Prompts the user for arguments if they are not provided via CLI."""
     print("\n--- Debugger Mode: Interactive Configuration ---")
@@ -69,11 +99,36 @@ def get_interactive_args(args):
     else: args.input = default_input
 
     # Coordinates
-    val = input(f"Enter base Latitude [{args.lat}]: ").strip()
-    if val: args.lat = float(val)
+    while True:
+        val = input(f"Enter base Latitude (Float or DMS e.g. 36°54 32S) [{args.lat}]: ").strip()
+        if not val:
+            break
+        try:
+            args.lat = parse_coordinate(val)
+            print(f"  -> Parsed Latitude: {args.lat}")
+            break
+        except ValueError as e:
+            print(f"Error: {e}. Please try again.")
 
-    val = input(f"Enter base Longitude [{args.lon}]: ").strip()
-    if val: args.lon = float(val)
+    while True:
+        val = input(f"Enter base Longitude (Float or DMS e.g. 174°48 35E) [{args.lon}]: ").strip()
+        if not val:
+            break
+        try:
+            # Handle potential typos like '174948' instead of '174°48'
+            if len(val) > 10 and ' ' in val and not any(c in val for c in ['°', 'N', 'S', 'E', 'W']):
+                print("Note: Appending 'E' to your input to assist with parsing...")
+                val += 'E'
+            
+            # Very hacky fix for "174948 35.90"
+            if '9' in val and '°' not in val:
+                val = val.replace('9', ' ', 1)
+
+            args.lon = parse_coordinate(val)
+            print(f"  -> Parsed Longitude: {args.lon}")
+            break
+        except ValueError as e:
+            print(f"Error: {e}. Please try again.")
 
     print("------------------------------------------------\n")
     return args
