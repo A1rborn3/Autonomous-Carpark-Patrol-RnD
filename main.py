@@ -5,6 +5,7 @@ import glob
 from point_cloud_processor import PointCloudProcessor
 from map_generator import MapGenerator
 from kml_exporter import KMLExporter
+from road_graph_extractor import RoadGraphExtractor
 
 def process_single_file(input_path, args):
     """Processes a single .ply file through the pipeline."""
@@ -51,10 +52,45 @@ def process_single_file(input_path, args):
     occ_path = os.path.join(output_dir, "occupancy.png")
     map_gen.save_maps(ortho, occ, ortho_path, occ_path)
 
-    # 3. KML Export
+    if getattr(args, 'manual_edit', False):
+        print(f"\n[PAUSED] Maps saved to {output_dir}")
+        print("You may now manually edit 'occupancy.png' to block out parking spots (paint them black/0).")
+        print("You may ALSO paint pure Blue squares (B:255, G:0, R:0) to manually mark Entrances/Exits!")
+        input("Press Enter to continue graph extraction...")
+        import cv2
+        # Read as color to detect blue entrance markers
+        occ_reloaded = cv2.imread(occ_path, cv2.IMREAD_COLOR)
+        if occ_reloaded is not None:
+            import numpy as np
+            # Extract blue pixels (pure blue in BGR is [255, 0, 0])
+            # We use a slight tolerance in case of anti-aliasing or slight brush feathering
+            blue_mask = cv2.inRange(occ_reloaded, np.array([200, 0, 0]), np.array([255, 50, 50]))
+            
+            # Convert back to grayscale for the rest of the pipeline
+            occ = cv2.cvtColor(occ_reloaded, cv2.COLOR_BGR2GRAY)
+            print("Successfully loaded manually edited occupancy map.")
+        else:
+            print(f"Error: Could not reload {occ_path}. Using original.")
+            blue_mask = None
+    else:
+        blue_mask = None
+
+    # 3. Road Graph Extraction
+    graph_ext = RoadGraphExtractor(min_lane_width=args.min_lane_width, pixels_per_meter=args.resolution)
+    nodes, edges = graph_ext.extract_graph(occ, output_dir, blue_mask)
+
+    # 4. KML Export
     exporter = KMLExporter(base_lat=args.lat, base_lon=args.lon)
     kml_path = os.path.join(output_dir, f"{file_basename}.kml")
-    exporter.export_orthomosaic(ortho_path, bounds, occ_path=occ_path, output_kml=kml_path)
+    exporter.export_all(
+        ortho_path=ortho_path,
+        bounds=bounds,
+        nodes=nodes,
+        edges=edges,
+        resolution=args.resolution,
+        occ_path=occ_path,
+        output_kml=kml_path
+    )
 
     print(f"Finished processing {filename}. Results in {output_dir}")
 
@@ -130,6 +166,10 @@ def get_interactive_args(args):
         except ValueError as e:
             print(f"Error: {e}. Please try again.")
 
+    val = input("Pause for manual occupancy edit? (y/N) [N]: ").strip().lower()
+    if val == 'y':
+        args.manual_edit = True
+
     print("------------------------------------------------\n")
     return args
 
@@ -140,9 +180,11 @@ def main():
     parser.add_argument("--obs_height", type=float, default=0.1, help="Min height for obstacles (meters)")
     parser.add_argument("--max_height", type=float, default=2.0, help="Max height for points (meters)")
     parser.add_argument("--resolution", type=float, default=70, help="Map resolution (pixels/meter)")
+    parser.add_argument("--min_lane_width", type=float, default=2.5, help="Minimum lane width (meters)")
     parser.add_argument("--lat", type=float, default=37.7749, help="Base Latitude (origin)")
     parser.add_argument("--lon", type=float, default=-122.4194, help="Base Longitude (origin)")
     parser.add_argument("--output_dir", type=str, default="output", help="Base directory for output files")
+    parser.add_argument("--manual_edit", action="store_true", help="Pause to allow manual editing of occupancy.png before graph extraction")
     
     # Check if run with no arguments (typical for debugger launch)
     if len(sys.argv) == 1:
@@ -150,6 +192,12 @@ def main():
         args = get_interactive_args(args)
     else:
         args = parser.parse_args()
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Make output_dir relative to script directory if it's not an absolute path
+    if not os.path.isabs(args.output_dir):
+        args.output_dir = os.path.join(script_dir, args.output_dir)
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
@@ -159,11 +207,15 @@ def main():
     
     # If the path doesn't exist, try looking in the default folder (PLYInput)
     if not os.path.exists(input_path):
-        alt_path = os.path.join("PLYInput", input_path)
-        if os.path.exists(alt_path):
+        script_rel_path = os.path.join(script_dir, input_path)
+        alt_path = os.path.join(script_dir, "PLYInput", input_path)
+        
+        if os.path.exists(script_rel_path):
+            input_path = script_rel_path
+        elif os.path.exists(alt_path):
             input_path = alt_path
         else:
-            print(f"Error: Input path '{args.input}' does not exist (checked root and PLYInput/).")
+            print(f"Error: Input path '{args.input}' does not exist (checked CWD, script dir, and PLYInput/).")
             sys.exit(1)
 
     if os.path.isdir(input_path):
