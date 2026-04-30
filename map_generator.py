@@ -81,6 +81,7 @@ class MapGenerator:
     def save_maps(self, orthomosaic, occupancy, ortho_path="orthomosaic.png", occ_path="occupancy.png"):
         """Saves the generated maps to disk."""
         cv2.imwrite(ortho_path, orthomosaic)
-        # For occupancy, we might want to save it as a high-contrast image
-        cv2.imwrite(occ_path, occupancy)
+        # Convert grayscale occupancy to BGR so external scripts/editors can paint pure colors (like Blue) on it
+        occupancy_bgr = cv2.cvtColor(occupancy, cv2.COLOR_GRAY2BGR)
+        cv2.imwrite(occ_path, occupancy_bgr)
         print(f"Maps saved to {ortho_path} and {occ_path}")
