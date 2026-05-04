@@ -13,6 +13,7 @@ class ParkingAnnotatorApp:
         self.image_path = None
         self.original_image = None
         self.tk_image = None
+        self.map_metadata = None
         
         self.polygons = [] # List of completed polygons. Each is a dict: {'id': int, 'points': [(x,y), ...]}
         self.current_polygon = [] # List of (x,y) points for the polygon currently being drawn
@@ -103,11 +104,38 @@ class ParkingAnnotatorApp:
         base_name = os.path.splitext(os.path.basename(self.image_path))[0]
         json_path = os.path.join(base_dir, f"{base_name}_parking_spaces.json")
         
+        # Load map metadata if available
+        meta_path = os.path.join(base_dir, "map_metadata.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, 'r') as f:
+                    self.map_metadata = json.load(f)
+            except Exception as e:
+                print(f"Failed to load map metadata: {e}")
+        else:
+            self.map_metadata = None
+        
         if os.path.exists(json_path):
             try:
                 with open(json_path, 'r') as f:
                     data = json.load(f)
-                    self.polygons = data.get("parking_spaces", [])
+                    loaded_polygons = data.get("parking_spaces", [])
+                    is_meters = data.get("coordinate_system") == "meters"
+                    
+                    self.polygons = []
+                    for poly in loaded_polygons:
+                        new_poly = {"id": poly["id"], "points": []}
+                        for pt in poly["points"]:
+                            if is_meters and self.map_metadata:
+                                res = self.map_metadata["resolution"]
+                                bounds = self.map_metadata["bounds"]
+                                x_px = int(round((pt[0] - bounds["min_x"]) * res))
+                                y_px = int(round((bounds["max_y"] - pt[1]) * res))
+                                new_poly["points"].append((x_px, y_px))
+                            else:
+                                new_poly["points"].append((int(pt[0]), int(pt[1])))
+                        self.polygons.append(new_poly)
+                        
                     if self.polygons:
                         self.poly_id_counter = max([p.get('id', 0) for p in self.polygons]) + 1
                 self.status_var.set(f"Loaded existing annotations from {json_path}")
@@ -269,9 +297,25 @@ class ParkingAnnotatorApp:
         )
         
         if save_path:
+            converted_polygons = []
+            for poly in self.polygons:
+                new_poly = {"id": poly["id"], "points": []}
+                for pt in poly["points"]:
+                    x, y = pt[0], pt[1]
+                    if self.map_metadata:
+                        res = self.map_metadata["resolution"]
+                        bounds = self.map_metadata["bounds"]
+                        x_m = (x / res) + bounds["min_x"]
+                        y_m = bounds["max_y"] - (y / res)
+                        new_poly["points"].append([round(x_m, 6), round(y_m, 6)])
+                    else:
+                        new_poly["points"].append([x, y])
+                converted_polygons.append(new_poly)
+
             data = {
                 "image_file": os.path.basename(self.image_path),
-                "parking_spaces": self.polygons
+                "coordinate_system": "meters" if self.map_metadata else "pixels",
+                "parking_spaces": converted_polygons
             }
             try:
                 with open(save_path, 'w') as f:

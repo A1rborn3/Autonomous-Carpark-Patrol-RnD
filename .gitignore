@@ -8,6 +8,7 @@
 *.kml
 *.venv
 *.pyc
+*.output 
 # User-specific files
 *.rsuser
 *.suo
@@ -421,3 +422,8 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+/PLYInput
+/output
+/output
+/output
+/output

@@ -1,5 +1,7 @@
 import numpy as np
 import cv2
+import json
+import os
 
 class MapGenerator:
     def __init__(self, resolution=20):
@@ -78,10 +80,24 @@ class MapGenerator:
         
         return orthomosaic, occupancy, bounds
 
-    def save_maps(self, orthomosaic, occupancy, ortho_path="orthomosaic.png", occ_path="occupancy.png"):
-        """Saves the generated maps to disk."""
+    def save_maps(self, orthomosaic, occupancy, bounds, ortho_path="orthomosaic.png", occ_path="occupancy.png"):
+        """Saves the generated maps to disk along with their metric metadata."""
         cv2.imwrite(ortho_path, orthomosaic)
         # Convert grayscale occupancy to BGR so external scripts/editors can paint pure colors (like Blue) on it
         occupancy_bgr = cv2.cvtColor(occupancy, cv2.COLOR_GRAY2BGR)
         cv2.imwrite(occ_path, occupancy_bgr)
+        
+        # Save map metadata
+        meta_data = {
+            "resolution": self.resolution,
+            "bounds": bounds
+        }
+        
+        out_dir = os.path.dirname(ortho_path)
+        meta_path = os.path.join(out_dir, "map_metadata.json") if out_dir else "map_metadata.json"
+        
+        with open(meta_path, 'w') as f:
+            json.dump(meta_data, f, indent=4)
+            
         print(f"Maps saved to {ortho_path} and {occ_path}")
+        print(f"Metadata saved to {meta_path}")

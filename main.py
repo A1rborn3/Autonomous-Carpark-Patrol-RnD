@@ -50,7 +50,7 @@ def process_single_file(input_path, args):
     
     ortho_path = os.path.join(output_dir, "orthomosaic.png")
     occ_path = os.path.join(output_dir, "occupancy.png")
-    map_gen.save_maps(ortho, occ, ortho_path, occ_path)
+    map_gen.save_maps(ortho, occ, bounds, ortho_path, occ_path)
 
     if getattr(args, 'manual_edit', False):
         print(f"\n[PAUSED] Maps saved to {output_dir}")
