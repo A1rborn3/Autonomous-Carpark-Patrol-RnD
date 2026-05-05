@@ -7,7 +7,8 @@ import os
 class ParkingAnnotatorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Parking Space Annotator")
+        if hasattr(self.root, 'title'):
+            self.root.title("Parking Space Annotator")
         
         # State variables
         self.image_path = None
@@ -83,11 +84,12 @@ class ParkingAnnotatorApp:
         status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-    def load_image(self):
-        file_path = filedialog.askopenfilename(
-            title="Select Map Image",
-            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp"), ("All Files", "*.*")]
-        )
+    def load_image(self, file_path=None):
+        if not file_path:
+            file_path = filedialog.askopenfilename(
+                title="Select Map Image",
+                filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp"), ("All Files", "*.*")]
+            )
         if not file_path:
             return
             

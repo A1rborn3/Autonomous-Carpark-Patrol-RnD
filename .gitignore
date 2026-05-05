@@ -424,6 +424,7 @@ FodyWeavers.xsd
 *.msp
 /PLYInput
 /output
-/output
-/output
-/output
+
+/output/Smart_Parking_Park
+/output/PolyCamPark
+

@@ -10,10 +10,13 @@ from point_cloud_processor import PointCloudProcessor
 from map_generator import MapGenerator
 
 class PipelineGUI:
-    def __init__(self, root):
+    def __init__(self, root, on_map_generated=None):
         self.root = root
-        self.root.title("PLY to 2D Map Pipeline")
-        self.root.geometry("1024x768")
+        self.on_map_generated = on_map_generated
+        if hasattr(self.root, 'title'):
+            self.root.title("PLY to 2D Map Pipeline")
+        if hasattr(self.root, 'geometry'):
+            self.root.geometry("1024x768")
         
         self.input_file = tk.StringVar()
         self.output_dir = tk.StringVar(value=os.path.join(os.path.dirname(os.path.abspath(__file__)), "output"))
@@ -138,6 +141,10 @@ class PipelineGUI:
             # Display map
             self.root.after(0, lambda: self.display_map(ortho, bounds))
             self.root.after(0, lambda: self.status_var.set(f"Finished. Saved to {output_dir}"))
+            
+            if self.on_map_generated:
+                self.root.after(0, lambda: self.on_map_generated(ortho_path))
+            
             
         except Exception as e:
             self.root.after(0, lambda: messagebox.showerror("Processing Error", str(e)))
