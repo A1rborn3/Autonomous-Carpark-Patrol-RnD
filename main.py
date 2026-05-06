@@ -49,12 +49,12 @@ def process_single_file(input_path, args):
     ortho, occ, bounds = map_gen.generate_maps(ground_points, obstacle_points)
     
     ortho_path = os.path.join(output_dir, "orthomosaic.png")
-    occ_path = os.path.join(output_dir, "occupancy.png")
-    map_gen.save_maps(ortho, occ, ortho_path, occ_path)
+    occ_path = os.path.join(output_dir, "obstacle_occupancy.png")
+    map_gen.save_maps(ortho, occ, bounds, ortho_path, occ_path)
 
     if getattr(args, 'manual_edit', False):
         print(f"\n[PAUSED] Maps saved to {output_dir}")
-        print("You may now manually edit 'occupancy.png' to block out parking spots (paint them black/0).")
+        print("You may now manually edit 'obstacle_occupancy.png' to block out parking spots (paint them black/0).")
         print("You may ALSO paint pure Blue squares (B:255, G:0, R:0) to manually mark Entrances/Exits!")
         input("Press Enter to continue graph extraction...")
         import cv2
@@ -184,7 +184,7 @@ def main():
     parser.add_argument("--lat", type=float, default=37.7749, help="Base Latitude (origin)")
     parser.add_argument("--lon", type=float, default=-122.4194, help="Base Longitude (origin)")
     parser.add_argument("--output_dir", type=str, default="output", help="Base directory for output files")
-    parser.add_argument("--manual_edit", action="store_true", help="Pause to allow manual editing of occupancy.png before graph extraction")
+    parser.add_argument("--manual_edit", action="store_true", help="Pause to allow manual editing of obstacle_occupancy.png before graph extraction")
     
     # Check if run with no arguments (typical for debugger launch)
     if len(sys.argv) == 1:

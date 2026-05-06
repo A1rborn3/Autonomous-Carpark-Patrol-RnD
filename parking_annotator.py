@@ -3,21 +3,28 @@ from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 import json
 import os
+import cv2
+import numpy as np
 
 class ParkingAnnotatorApp:
-    def __init__(self, root):
+    def __init__(self, root, on_annotations_saved=None):
         self.root = root
-        self.root.title("Parking Space Annotator")
+        self.on_annotations_saved = on_annotations_saved
+        if hasattr(self.root, 'title'):
+            self.root.title("Parking Space Annotator")
         
         # State variables
         self.image_path = None
         self.original_image = None
         self.tk_image = None
+        self.map_metadata = None
         
         self.polygons = [] # List of completed polygons. Each is a dict: {'id': int, 'points': [(x,y), ...]}
         self.current_polygon = [] # List of (x,y) points for the polygon currently being drawn
         self.poly_id_counter = 1
         self.zoom_factor = 1.0
+        self.img_offset_x = 0
+        self.img_offset_y = 0
         
         # UI Setup
         self.setup_ui()
@@ -76,17 +83,20 @@ class ParkingAnnotatorApp:
         self.canvas.bind("<Button-4>", self.on_mousewheel) # Linux scroll up
         self.canvas.bind("<Button-5>", self.on_mousewheel) # Linux scroll down
         
+        self.canvas.bind("<Configure>", lambda e: self.redraw())
+        
         # Instructions
         self.status_var = tk.StringVar()
         self.status_var.set("Load an image to begin. Left-click to add points. Right-click to complete a polygon.")
         status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-    def load_image(self):
-        file_path = filedialog.askopenfilename(
-            title="Select Map Image",
-            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp"), ("All Files", "*.*")]
-        )
+    def load_image(self, file_path=None):
+        if not file_path:
+            file_path = filedialog.askopenfilename(
+                title="Select Map Image",
+                filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp"), ("All Files", "*.*")]
+            )
         if not file_path:
             return
             
@@ -103,11 +113,38 @@ class ParkingAnnotatorApp:
         base_name = os.path.splitext(os.path.basename(self.image_path))[0]
         json_path = os.path.join(base_dir, f"{base_name}_parking_spaces.json")
         
+        # Load map metadata if available
+        meta_path = os.path.join(base_dir, "map_metadata.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, 'r') as f:
+                    self.map_metadata = json.load(f)
+            except Exception as e:
+                print(f"Failed to load map metadata: {e}")
+        else:
+            self.map_metadata = None
+        
         if os.path.exists(json_path):
             try:
                 with open(json_path, 'r') as f:
                     data = json.load(f)
-                    self.polygons = data.get("parking_spaces", [])
+                    loaded_polygons = data.get("parking_spaces", [])
+                    is_meters = data.get("coordinate_system") == "meters"
+                    
+                    self.polygons = []
+                    for poly in loaded_polygons:
+                        new_poly = {"id": poly["id"], "points": []}
+                        for pt in poly["points"]:
+                            if is_meters and self.map_metadata:
+                                res = self.map_metadata["resolution"]
+                                bounds = self.map_metadata["bounds"]
+                                x_px = int(round((pt[0] - bounds["min_x"]) * res))
+                                y_px = int(round((bounds["max_y"] - pt[1]) * res))
+                                new_poly["points"].append((x_px, y_px))
+                            else:
+                                new_poly["points"].append((int(pt[0]), int(pt[1])))
+                        self.polygons.append(new_poly)
+                        
                     if self.polygons:
                         self.poly_id_counter = max([p.get('id', 0) for p in self.polygons]) + 1
                 self.status_var.set(f"Loaded existing annotations from {json_path}")
@@ -129,7 +166,6 @@ class ParkingAnnotatorApp:
         resized = self.original_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         self.tk_image = ImageTk.PhotoImage(resized)
         
-        self.canvas.config(scrollregion=(0, 0, new_width, new_height))
         self.redraw()
 
     def zoom_in(self):
@@ -162,8 +198,8 @@ class ParkingAnnotatorApp:
         y = self.canvas.canvasy(event.y)
         
         # Un-scale the coordinates to original image size
-        orig_x = x / self.zoom_factor
-        orig_y = y / self.zoom_factor
+        orig_x = (x - self.img_offset_x) / self.zoom_factor
+        orig_y = (y - self.img_offset_y) / self.zoom_factor
         
         # Ensure points are within image bounds
         if 0 <= orig_x <= self.original_image.width and 0 <= orig_y <= self.original_image.height:
@@ -183,6 +219,7 @@ class ParkingAnnotatorApp:
             self.current_polygon = []
             self.status_var.set(f"Polygon {self.poly_id_counter-1} saved. {len(self.polygons)} total.")
             self.redraw()
+            self.update_live_occupancy()
         elif len(self.current_polygon) > 0:
             messagebox.showwarning("Warning", "A polygon must have at least 3 points.")
 
@@ -195,6 +232,7 @@ class ParkingAnnotatorApp:
             self.polygons.pop()
             self.redraw()
             self.status_var.set(f"Removed last polygon. {len(self.polygons)} total.")
+            self.update_live_occupancy()
 
     def clear_current(self):
         self.current_polygon = []
@@ -207,19 +245,35 @@ class ParkingAnnotatorApp:
             self.poly_id_counter = 1
             self.redraw()
             self.status_var.set("All polygons cleared.")
+            self.update_live_occupancy()
 
     def redraw(self):
         self.canvas.delete("all")
         
         if self.tk_image:
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
+            cw = self.canvas.winfo_width()
+            ch = self.canvas.winfo_height()
+            
+            if cw <= 1:
+                cw = self.canvas.winfo_reqwidth()
+            if ch <= 1:
+                ch = self.canvas.winfo_reqheight()
+                
+            iw = self.tk_image.width()
+            ih = self.tk_image.height()
+            
+            self.img_offset_x = max(0, (cw - iw) // 2)
+            self.img_offset_y = max(0, (ch - ih) // 2)
+            
+            self.canvas.create_image(self.img_offset_x, self.img_offset_y, anchor=tk.NW, image=self.tk_image)
+            self.canvas.config(scrollregion=(0, 0, max(cw, iw), max(ch, ih)))
             
         # Draw completed polygons
         for poly in self.polygons:
             points = poly["points"]
             if len(points) > 2:
                 # Scale points
-                scaled_points = [(pt[0]*self.zoom_factor, pt[1]*self.zoom_factor) for pt in points]
+                scaled_points = [(pt[0]*self.zoom_factor + self.img_offset_x, pt[1]*self.zoom_factor + self.img_offset_y) for pt in points]
                 
                 # Draw filled polygon with outline
                 flat_points = [coord for pt in scaled_points for coord in pt]
@@ -232,7 +286,7 @@ class ParkingAnnotatorApp:
 
         # Draw current polygon points and lines
         if self.current_polygon:
-            scaled_current = [(pt[0]*self.zoom_factor, pt[1]*self.zoom_factor) for pt in self.current_polygon]
+            scaled_current = [(pt[0]*self.zoom_factor + self.img_offset_x, pt[1]*self.zoom_factor + self.img_offset_y) for pt in self.current_polygon]
             for i, pt in enumerate(scaled_current):
                 r = 3
                 self.canvas.create_oval(pt[0]-r, pt[1]-r, pt[0]+r, pt[1]+r, fill='red', outline='red')
@@ -269,17 +323,71 @@ class ParkingAnnotatorApp:
         )
         
         if save_path:
+            converted_polygons = []
+            for poly in self.polygons:
+                new_poly = {"id": poly["id"], "points": []}
+                for pt in poly["points"]:
+                    x, y = pt[0], pt[1]
+                    if self.map_metadata:
+                        res = self.map_metadata["resolution"]
+                        bounds = self.map_metadata["bounds"]
+                        x_m = (x / res) + bounds["min_x"]
+                        y_m = bounds["max_y"] - (y / res)
+                        new_poly["points"].append([round(x_m, 6), round(y_m, 6)])
+                    else:
+                        new_poly["points"].append([x, y])
+                converted_polygons.append(new_poly)
+
             data = {
                 "image_file": os.path.basename(self.image_path),
-                "parking_spaces": self.polygons
+                "coordinate_system": "meters" if self.map_metadata else "pixels",
+                "parking_spaces": converted_polygons
             }
             try:
                 with open(save_path, 'w') as f:
                     json.dump(data, f, indent=4)
+                        
                 messagebox.showinfo("Success", f"Saved {len(self.polygons)} parking spaces to {os.path.basename(save_path)}")
-                self.status_var.set(f"Saved to {os.path.basename(save_path)}")
+                self.status_var.set(f"Saved to {os.path.basename(save_path)}.")
+                
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save file:\n{e}")
+
+    def update_live_occupancy(self):
+        if not self.image_path or not self.original_image:
+            return
+            
+        base_dir = os.path.dirname(self.image_path)
+        try:
+            w, h = self.original_image.size
+            # Create white image (255) for walkable, black (0) for parking spaces
+            parking_occ = np.full((h, w), 255, dtype=np.uint8)
+            
+            expansion_m = 0.75
+            if self.map_metadata and "resolution" in self.map_metadata:
+                res = self.map_metadata["resolution"]
+                expansion_px = int(round(expansion_m * res))
+            else:
+                expansion_px = int(round(expansion_m * 20)) # fallback
+                
+            thickness = max(1, expansion_px * 2)
+            
+            for poly in self.polygons:
+                pts = np.array(poly["points"], np.int32)
+                pts = pts.reshape((-1, 1, 2))
+                
+                # Fill polygon with black
+                cv2.fillPoly(parking_occ, [pts], 0)
+                # Expand polygon by drawing thick outline
+                cv2.polylines(parking_occ, [pts], isClosed=True, color=0, thickness=thickness)
+                
+            park_occ_path = os.path.join(base_dir, "parking_occupancy.png")
+            cv2.imwrite(park_occ_path, parking_occ)
+            
+            if self.on_annotations_saved:
+                self.on_annotations_saved(self.image_path)
+        except Exception as img_e:
+            print(f"Failed to create live parking occupancy image: {img_e}")
 
 if __name__ == "__main__":
     root = tk.Tk()
