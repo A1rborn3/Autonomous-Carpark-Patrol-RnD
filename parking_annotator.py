@@ -3,10 +3,13 @@ from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 import json
 import os
+import cv2
+import numpy as np
 
 class ParkingAnnotatorApp:
-    def __init__(self, root):
+    def __init__(self, root, on_annotations_saved=None):
         self.root = root
+        self.on_annotations_saved = on_annotations_saved
         if hasattr(self.root, 'title'):
             self.root.title("Parking Space Annotator")
         
@@ -20,6 +23,8 @@ class ParkingAnnotatorApp:
         self.current_polygon = [] # List of (x,y) points for the polygon currently being drawn
         self.poly_id_counter = 1
         self.zoom_factor = 1.0
+        self.img_offset_x = 0
+        self.img_offset_y = 0
         
         # UI Setup
         self.setup_ui()
@@ -77,6 +82,8 @@ class ParkingAnnotatorApp:
         self.canvas.bind("<MouseWheel>", self.on_mousewheel) # Windows / Mac
         self.canvas.bind("<Button-4>", self.on_mousewheel) # Linux scroll up
         self.canvas.bind("<Button-5>", self.on_mousewheel) # Linux scroll down
+        
+        self.canvas.bind("<Configure>", lambda e: self.redraw())
         
         # Instructions
         self.status_var = tk.StringVar()
@@ -159,7 +166,6 @@ class ParkingAnnotatorApp:
         resized = self.original_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         self.tk_image = ImageTk.PhotoImage(resized)
         
-        self.canvas.config(scrollregion=(0, 0, new_width, new_height))
         self.redraw()
 
     def zoom_in(self):
@@ -192,8 +198,8 @@ class ParkingAnnotatorApp:
         y = self.canvas.canvasy(event.y)
         
         # Un-scale the coordinates to original image size
-        orig_x = x / self.zoom_factor
-        orig_y = y / self.zoom_factor
+        orig_x = (x - self.img_offset_x) / self.zoom_factor
+        orig_y = (y - self.img_offset_y) / self.zoom_factor
         
         # Ensure points are within image bounds
         if 0 <= orig_x <= self.original_image.width and 0 <= orig_y <= self.original_image.height:
@@ -213,6 +219,7 @@ class ParkingAnnotatorApp:
             self.current_polygon = []
             self.status_var.set(f"Polygon {self.poly_id_counter-1} saved. {len(self.polygons)} total.")
             self.redraw()
+            self.update_live_occupancy()
         elif len(self.current_polygon) > 0:
             messagebox.showwarning("Warning", "A polygon must have at least 3 points.")
 
@@ -225,6 +232,7 @@ class ParkingAnnotatorApp:
             self.polygons.pop()
             self.redraw()
             self.status_var.set(f"Removed last polygon. {len(self.polygons)} total.")
+            self.update_live_occupancy()
 
     def clear_current(self):
         self.current_polygon = []
@@ -237,19 +245,35 @@ class ParkingAnnotatorApp:
             self.poly_id_counter = 1
             self.redraw()
             self.status_var.set("All polygons cleared.")
+            self.update_live_occupancy()
 
     def redraw(self):
         self.canvas.delete("all")
         
         if self.tk_image:
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
+            cw = self.canvas.winfo_width()
+            ch = self.canvas.winfo_height()
+            
+            if cw <= 1:
+                cw = self.canvas.winfo_reqwidth()
+            if ch <= 1:
+                ch = self.canvas.winfo_reqheight()
+                
+            iw = self.tk_image.width()
+            ih = self.tk_image.height()
+            
+            self.img_offset_x = max(0, (cw - iw) // 2)
+            self.img_offset_y = max(0, (ch - ih) // 2)
+            
+            self.canvas.create_image(self.img_offset_x, self.img_offset_y, anchor=tk.NW, image=self.tk_image)
+            self.canvas.config(scrollregion=(0, 0, max(cw, iw), max(ch, ih)))
             
         # Draw completed polygons
         for poly in self.polygons:
             points = poly["points"]
             if len(points) > 2:
                 # Scale points
-                scaled_points = [(pt[0]*self.zoom_factor, pt[1]*self.zoom_factor) for pt in points]
+                scaled_points = [(pt[0]*self.zoom_factor + self.img_offset_x, pt[1]*self.zoom_factor + self.img_offset_y) for pt in points]
                 
                 # Draw filled polygon with outline
                 flat_points = [coord for pt in scaled_points for coord in pt]
@@ -262,7 +286,7 @@ class ParkingAnnotatorApp:
 
         # Draw current polygon points and lines
         if self.current_polygon:
-            scaled_current = [(pt[0]*self.zoom_factor, pt[1]*self.zoom_factor) for pt in self.current_polygon]
+            scaled_current = [(pt[0]*self.zoom_factor + self.img_offset_x, pt[1]*self.zoom_factor + self.img_offset_y) for pt in self.current_polygon]
             for i, pt in enumerate(scaled_current):
                 r = 3
                 self.canvas.create_oval(pt[0]-r, pt[1]-r, pt[0]+r, pt[1]+r, fill='red', outline='red')
@@ -322,10 +346,48 @@ class ParkingAnnotatorApp:
             try:
                 with open(save_path, 'w') as f:
                     json.dump(data, f, indent=4)
+                        
                 messagebox.showinfo("Success", f"Saved {len(self.polygons)} parking spaces to {os.path.basename(save_path)}")
-                self.status_var.set(f"Saved to {os.path.basename(save_path)}")
+                self.status_var.set(f"Saved to {os.path.basename(save_path)}.")
+                
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save file:\n{e}")
+
+    def update_live_occupancy(self):
+        if not self.image_path or not self.original_image:
+            return
+            
+        base_dir = os.path.dirname(self.image_path)
+        try:
+            w, h = self.original_image.size
+            # Create white image (255) for walkable, black (0) for parking spaces
+            parking_occ = np.full((h, w), 255, dtype=np.uint8)
+            
+            expansion_m = 0.75
+            if self.map_metadata and "resolution" in self.map_metadata:
+                res = self.map_metadata["resolution"]
+                expansion_px = int(round(expansion_m * res))
+            else:
+                expansion_px = int(round(expansion_m * 20)) # fallback
+                
+            thickness = max(1, expansion_px * 2)
+            
+            for poly in self.polygons:
+                pts = np.array(poly["points"], np.int32)
+                pts = pts.reshape((-1, 1, 2))
+                
+                # Fill polygon with black
+                cv2.fillPoly(parking_occ, [pts], 0)
+                # Expand polygon by drawing thick outline
+                cv2.polylines(parking_occ, [pts], isClosed=True, color=0, thickness=thickness)
+                
+            park_occ_path = os.path.join(base_dir, "parking_occupancy.png")
+            cv2.imwrite(park_occ_path, parking_occ)
+            
+            if self.on_annotations_saved:
+                self.on_annotations_saved(self.image_path)
+        except Exception as img_e:
+            print(f"Failed to create live parking occupancy image: {img_e}")
 
 if __name__ == "__main__":
     root = tk.Tk()

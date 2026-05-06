@@ -80,7 +80,7 @@ class MapGenerator:
         
         return orthomosaic, occupancy, bounds
 
-    def save_maps(self, orthomosaic, occupancy, bounds, ortho_path="orthomosaic.png", occ_path="occupancy.png"):
+    def save_maps(self, orthomosaic, occupancy, bounds, ortho_path="orthomosaic.png", occ_path="obstacle_occupancy.png"):
         """Saves the generated maps to disk along with their metric metadata."""
         cv2.imwrite(ortho_path, orthomosaic)
         # Convert grayscale occupancy to BGR so external scripts/editors can paint pure colors (like Blue) on it

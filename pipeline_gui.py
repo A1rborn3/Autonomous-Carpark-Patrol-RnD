@@ -133,7 +133,7 @@ class PipelineGUI:
             ortho, occ, bounds = map_gen.generate_maps(ground_points, obstacle_points)
             
             ortho_path = os.path.join(output_dir, "orthomosaic.png")
-            occ_path = os.path.join(output_dir, "occupancy.png")
+            occ_path = os.path.join(output_dir, "obstacle_occupancy.png")
             
             self.root.after(0, lambda: self.status_var.set("Saving Maps..."))
             map_gen.save_maps(ortho, occ, bounds, ortho_path, occ_path)
