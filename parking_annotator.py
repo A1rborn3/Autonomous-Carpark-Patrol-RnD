@@ -25,8 +25,10 @@ class ParkingAnnotatorApp:
         self.zoom_factor = 1.0
         self.img_offset_x = 0
         self.img_offset_y = 0
+        self.current_poly_type = "parking_space" # "parking_space" or "entrance_exit"
         
         # UI Setup
+
         self.setup_ui()
         
     def setup_ui(self):
@@ -49,14 +51,21 @@ class ParkingAnnotatorApp:
         btn_clear_all = tk.Button(btn_frame, text="Clear ALL Polygons", command=self.clear_all)
         btn_clear_all.pack(side=tk.LEFT, padx=5)
         
-        btn_zoom_in = tk.Button(btn_frame, text="Zoom In", command=self.zoom_in)
-        btn_zoom_in.pack(side=tk.LEFT, padx=5)
-        
         btn_zoom_out = tk.Button(btn_frame, text="Zoom Out", command=self.zoom_out)
         btn_zoom_out.pack(side=tk.LEFT, padx=5)
         
-        btn_save = tk.Button(btn_frame, text="Save Annotations", command=self.save_annotations)
+        # Type Toggle
+        self.type_frame = tk.Frame(btn_frame, padx=10)
+        self.type_frame.pack(side=tk.LEFT)
+        tk.Label(self.type_frame, text="Current Tool:").pack(side=tk.LEFT)
+        self.btn_type_park = tk.Button(self.type_frame, text="Parking Spot", command=lambda: self.set_tool("parking_space"), bg="lightblue", relief=tk.SUNKEN)
+        self.btn_type_park.pack(side=tk.LEFT, padx=2)
+        self.btn_type_ent = tk.Button(self.type_frame, text="Entrance/Exit", command=lambda: self.set_tool("entrance_exit"))
+        self.btn_type_ent.pack(side=tk.LEFT, padx=2)
+
+        btn_save = tk.Button(btn_frame, text="Save Annotations", command=self.save_annotations, bg="green", fg="black")
         btn_save.pack(side=tk.RIGHT, padx=5)
+
         
         # Canvas Frame with Scrollbars
         canvas_frame = tk.Frame(self.root)
@@ -133,8 +142,9 @@ class ParkingAnnotatorApp:
                     
                     self.polygons = []
                     for poly in loaded_polygons:
-                        new_poly = {"id": poly["id"], "points": []}
+                        new_poly = {"id": poly["id"], "points": [], "type": poly.get("type", "parking_space")}
                         for pt in poly["points"]:
+
                             if is_meters and self.map_metadata:
                                 res = self.map_metadata["resolution"]
                                 bounds = self.map_metadata["bounds"]
@@ -213,13 +223,15 @@ class ParkingAnnotatorApp:
         if len(self.current_polygon) > 2:
             self.polygons.append({
                 "id": self.poly_id_counter,
+                "type": self.current_poly_type,
                 "points": list(self.current_polygon)
             })
             self.poly_id_counter += 1
             self.current_polygon = []
-            self.status_var.set(f"Polygon {self.poly_id_counter-1} saved. {len(self.polygons)} total.")
+            self.status_var.set(f"{self.current_poly_type} {self.poly_id_counter-1} saved. {len(self.polygons)} total.")
             self.redraw()
             self.update_live_occupancy()
+
         elif len(self.current_polygon) > 0:
             messagebox.showwarning("Warning", "A polygon must have at least 3 points.")
 
@@ -277,12 +289,20 @@ class ParkingAnnotatorApp:
                 
                 # Draw filled polygon with outline
                 flat_points = [coord for pt in scaled_points for coord in pt]
-                self.canvas.create_polygon(flat_points, outline='blue', fill='', width=2, tags="poly")
+                color = 'blue' if poly.get('type') == 'entrance_exit' else 'cyan'
+                fill = 'blue' if poly.get('type') == 'entrance_exit' else ''
+                stipple = 'gray25' if poly.get('type') == 'entrance_exit' else ''
+                
+                self.canvas.create_polygon(flat_points, outline=color, fill=fill, stipple=stipple, width=2, tags="poly")
                 
                 # Draw ID in the center
                 cx = sum([p[0] for p in scaled_points]) / len(scaled_points)
                 cy = sum([p[1] for p in scaled_points]) / len(scaled_points)
-                self.canvas.create_text(cx, cy, text=str(poly["id"]), fill="red", font=("Arial", 12, "bold"))
+                text_color = "white" if poly.get('type') == 'entrance_exit' else "red"
+                self.canvas.create_text(cx, cy, text=str(poly["id"]), fill=text_color, font=("Arial", 10, "bold"))
+
+
+
 
         # Draw current polygon points and lines
         if self.current_polygon:
@@ -325,8 +345,9 @@ class ParkingAnnotatorApp:
         if save_path:
             converted_polygons = []
             for poly in self.polygons:
-                new_poly = {"id": poly["id"], "points": []}
+                new_poly = {"id": poly["id"], "type": poly.get("type", "parking_space"), "points": []}
                 for pt in poly["points"]:
+
                     x, y = pt[0], pt[1]
                     if self.map_metadata:
                         res = self.map_metadata["resolution"]
@@ -355,6 +376,19 @@ class ParkingAnnotatorApp:
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save file:\n{e}")
 
+    def set_tool(self, tool_type):
+        self.current_poly_type = tool_type
+        if tool_type == "parking_space":
+            self.btn_type_park.config(relief=tk.SUNKEN, bg="lightblue")
+            self.btn_type_ent.config(relief=tk.RAISED, bg="SystemButtonFace")
+            self.status_var.set("Tool: Parking Spot. Left-click to draw.")
+        else:
+            self.btn_type_park.config(relief=tk.RAISED, bg="SystemButtonFace")
+            self.btn_type_ent.config(relief=tk.SUNKEN, bg="blue", fg="white")
+            self.status_var.set("Tool: Entrance/Exit. Left-click to draw. These will be marked as Blue (255,0,0) in occupancy.")
+
+
+
     def update_live_occupancy(self):
         if not self.image_path or not self.original_image:
             return
@@ -362,26 +396,28 @@ class ParkingAnnotatorApp:
         base_dir = os.path.dirname(self.image_path)
         try:
             w, h = self.original_image.size
-            # Create white image (255) for walkable, black (0) for parking spaces
-            parking_occ = np.full((h, w), 255, dtype=np.uint8)
+            # Create white BGR image (255, 255, 255) for walkable
+            # We use BGR to support blue entrances
+            parking_occ = np.full((h, w, 3), 255, dtype=np.uint8)
             
-            expansion_m = 0.75
-            if self.map_metadata and "resolution" in self.map_metadata:
-                res = self.map_metadata["resolution"]
-                expansion_px = int(round(expansion_m * res))
-            else:
-                expansion_px = int(round(expansion_m * 20)) # fallback
-                
+            expansion_m = 0.5
+            res = self.map_metadata["resolution"] if (self.map_metadata and "resolution" in self.map_metadata) else 20
+            expansion_px = int(round(expansion_m * res))
             thickness = max(1, expansion_px * 2)
             
             for poly in self.polygons:
-                pts = np.array(poly["points"], np.int32)
-                pts = pts.reshape((-1, 1, 2))
+                pts = np.array(poly["points"], np.int32).reshape((-1, 1, 2))
+                is_entrance = poly.get("type") == "entrance_exit"
                 
-                # Fill polygon with black
-                cv2.fillPoly(parking_occ, [pts], 0)
+                # BGR: Pure Blue is (255, 0, 0), Black is (0, 0, 0)
+                color = (255, 0, 0) if is_entrance else (0, 0, 0)
+                
+                # Fill polygon
+
+
+                cv2.fillPoly(parking_occ, [pts], color)
                 # Expand polygon by drawing thick outline
-                cv2.polylines(parking_occ, [pts], isClosed=True, color=0, thickness=thickness)
+                cv2.polylines(parking_occ, [pts], isClosed=True, color=color, thickness=thickness)
                 
             park_occ_path = os.path.join(base_dir, "parking_occupancy.png")
             cv2.imwrite(park_occ_path, parking_occ)
@@ -390,6 +426,7 @@ class ParkingAnnotatorApp:
                 self.on_annotations_saved(self.image_path)
         except Exception as img_e:
             print(f"Failed to create live parking occupancy image: {img_e}")
+
 
 if __name__ == "__main__":
     root = tk.Tk()

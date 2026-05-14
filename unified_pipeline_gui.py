@@ -144,8 +144,10 @@ class UnifiedPipelineGUI:
             self.root.after(0, lambda: self.set_state("waiting_edit"))
             
         except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+            err_msg = str(e)
+            self.root.after(0, lambda: messagebox.showerror("Error", err_msg))
             self.root.after(0, lambda: self.set_state("idle"))
+
 
     def run_graph_extraction(self):
         if not self.current_occ_path: return
@@ -179,14 +181,27 @@ class UnifiedPipelineGUI:
                     occ = cv2.min(occ, park_occ)
 
             
-            # Extract blue mask for entrances
-            occ_color = cv2.imread(occ_path, cv2.IMREAD_COLOR)
+            # If occ was merged, it might be BGR (color). We need to extract the blue mask
+            # from the color version, then convert the map to grayscale for the skeletonizer.
+            if len(occ.shape) == 3:
+                # BGR: Pure Blue is [255, 0, 0]
+                blue_mask = cv2.inRange(occ, np.array([200, 0, 0]), np.array([255, 50, 50]))
+                if cv2.countNonZero(blue_mask) == 0:
+                    blue_mask = None
+                # Convert to grayscale for graph extraction
+                occ = cv2.cvtColor(occ, cv2.COLOR_BGR2GRAY)
+            else:
+                # If grayscale, check the original color file for blue marks
+                occ_color = cv2.imread(occ_path, cv2.IMREAD_COLOR)
+                blue_mask = cv2.inRange(occ_color, np.array([200, 0, 0]), np.array([255, 50, 50]))
+                if cv2.countNonZero(blue_mask) == 0:
+                    blue_mask = None
 
-            blue_mask = cv2.inRange(occ_color, np.array([200, 0, 0]), np.array([255, 50, 50]))
-            if cv2.countNonZero(blue_mask) == 0: blue_mask = None
+
             
             graph_ext = RoadGraphExtractor(min_lane_width=self.min_lane_width.get(), pixels_per_meter=self.resolution.get())
             nodes, edges = graph_ext.extract_graph(occ, output_dir, blue_mask)
+
             
             # JSON Export
             json_exp = JSONExporter(output_dir)
@@ -200,7 +215,11 @@ class UnifiedPipelineGUI:
                 self.root.after(0, lambda: self.on_pipeline_finished(ortho_path))
                 
         except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("Extraction Error", str(e)))
+            import traceback
+            traceback.print_exc()
+            err_msg = str(e)
+            self.root.after(0, lambda: messagebox.showerror("Extraction Error", err_msg))
+
 
     def display_map(self, ortho_bgr, bounds):
         rgb = cv2.cvtColor(ortho_bgr, cv2.COLOR_BGR2RGB)

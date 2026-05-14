@@ -157,7 +157,8 @@ class RoadGraphExtractor:
                 entrance_centers.append({'x': cx, 'y': cy})
                 
         # Prune corner spurs and dead-ends
-        refined_nodes, edges = self._prune_spurs(refined_nodes, edges, dist_transform, entrance_centers)
+        refined_nodes, edges = self._prune_spurs(refined_nodes, edges, dist_transform, entrance_centers, blue_mask)
+
         
         # 5. Visual Debugging Output
         # Draw the final mathematical graph onto the occupancy map so we can see the pruned/straightened results
@@ -330,7 +331,7 @@ class RoadGraphExtractor:
                 
         return final_edges
 
-    def _prune_spurs(self, nodes, edges, dist_transform, entrance_centers):
+    def _prune_spurs(self, nodes, edges, dist_transform, entrance_centers, blue_mask=None):
         # Build adjacency list
         adj = {n['id']: set() for n in nodes}
         for e in edges:
@@ -392,7 +393,6 @@ class RoadGraphExtractor:
                 
                 # --- Manual Entrance Pinning ---
                 # Check if this leaf node is near the CENTROID of any painted entrance.
-                # This perfectly avoids granting immunity to corner spurs that just happen to touch the edges of the entrance!
                 leaf_node = node_dict[leaf]
                 for center in entrance_centers:
                     dist_to_center = np.hypot(leaf_node['x'] - center['x'], leaf_node['y'] - center['y'])
@@ -402,7 +402,6 @@ class RoadGraphExtractor:
                         break
                 
                 # --- Angle Protection ---
-                # Find if this branch forms a straight line with another branch at the intersection.
                 nbrs = list(adj[curr])
                 if len(nbrs) >= 3:
                     import math
@@ -429,23 +428,18 @@ class RoadGraphExtractor:
                                 min_dot = dot
                                 best_pair = (id1, id2)
                                 
-                    # dot < -0.866 corresponds to an angle > 150 degrees (nearly straight line)
                     if best_pair and min_dot < -0.866:
-                        # If the branch we came from is part of this straightest pair, it's protected!
                         if prev in best_pair:
                             is_protected = True
                             
                 if is_protected:
-                    continue # Skip pruning, this is a main path or entrance!
+                    continue # Skip pruning
                 
                 # --- Length Pruning ---
-                # Calculate local dynamic spur threshold (2 * max inscribed radius = 1 * lane width)
-                # For a 90 degree corner, the spur length is exactly 1.414 * R.
-                # So a 2.0 * R threshold mathematically perfectly targets corner spurs without threatening real paths!
                 local_max_spur_len = 2.0 * R
                 
                 if branch_len < local_max_spur_len:
-                    for n_id in path_nodes[:-1]: # Don't delete the intersection point
+                    for n_id in path_nodes[:-1]:
                         removed_nodes.add(n_id)
                         for neighbor in list(adj[n_id]):
                             adj[neighbor].discard(n_id)
@@ -453,7 +447,7 @@ class RoadGraphExtractor:
                     pruned_any = True
                     
             if not pruned_any:
-                break # No more spurs found
+                break
                 
         # Filter the final nodes and edges
         final_nodes = [n for n in nodes if n['id'] not in removed_nodes]
@@ -468,10 +462,34 @@ class RoadGraphExtractor:
         # Completely remove any nodes that were left totally isolated by the pruning
         final_nodes = [n for n in final_nodes if degree[n['id']] > 0]
             
+        # Default all to waypoints
         for n in final_nodes:
-            if degree[n['id']] == 1:
-                n['type'] = 'entrance_exit'
-            else:
-                n['type'] = 'waypoint'
-                
+            n['type'] = 'waypoint'
+            
+        # Tag ONLY the single closest node for each manually painted entrance center
+        if entrance_centers:
+            node_coords = np.array([[n['x'], n['y']] for n in final_nodes])
+            node_tree = KDTree(node_coords)
+            for center in entrance_centers:
+                dist, idx = node_tree.query([center['x'], center['y']])
+                if dist < 10.0 * self.pixels_per_meter:
+                    final_nodes[idx]['type'] = 'entrance_exit'
+
+        # FINAL STEP: Re-index everything so IDs are sequential and clean for the USER
+        # This resolves the confusion where IDs suggest more nodes than actually exist.
+        id_map = {}
+        for i, node in enumerate(final_nodes):
+            old_id = node['id']
+            new_id = f"node_{i}"
+            node['id'] = new_id
+            id_map[old_id] = new_id
+            
+        for i, edge in enumerate(final_edges):
+            edge['id'] = f"edge_{i}"
+            edge['from_id'] = id_map[edge['from_id']]
+            edge['to_id'] = id_map[edge['to_id']]
+            # Remove internal indices as they are no longer accurate/needed
+            if 'from_idx' in edge: del edge['from_idx']
+            if 'to_idx' in edge: del edge['to_idx']
+                    
         return final_nodes, final_edges

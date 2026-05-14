@@ -103,7 +103,9 @@ class MapGenerator:
         print(f"Metadata saved to {meta_path}")
     def apply_parking_annotations(self, occupancy, json_path):
         """
-        Reads parking space annotations from JSON and marks them as blocked (0) on the occupancy map.
+        Reads parking space annotations from JSON and marks them on the occupancy map.
+        - Parking Spots: Black (0, 0, 0)
+        - Entrances/Exits: Blue (255, 0, 0)
         """
         if not os.path.exists(json_path):
             return occupancy
@@ -115,18 +117,20 @@ class MapGenerator:
         if not parking_spaces:
             return occupancy
             
+        # Ensure occupancy is BGR color to support blue
+        if len(occupancy.shape) == 2:
+            occupancy = cv2.cvtColor(occupancy, cv2.COLOR_GRAY2BGR)
+            
         # Draw each polygon on the occupancy map
         for space in parking_spaces:
             points_m = np.array(space["points"])
+            poly_type = space.get("type", "parking_space")
             
             # Convert meters to pixels
-            # x_px = (x_m - min_x) * res
-            # y_px = (max_y - y_m) * res
             bounds = data.get("metadata", {}).get("bounds")
             res = data.get("metadata", {}).get("resolution", self.resolution)
             
             if not bounds:
-                # If metadata missing in JSON, we can't accurately convert unless we assume current session
                 continue
                 
             pts_px = []
@@ -137,10 +141,16 @@ class MapGenerator:
                 
             pts_px = np.array(pts_px, np.int32).reshape((-1, 1, 2))
             
-            # Fill with black (blocked)
-            cv2.fillPoly(occupancy, [pts_px], 0)
+            # BGR: Pure Blue is (255, 0, 0), Black is (0, 0, 0)
+            color = (255, 0, 0) if poly_type == "entrance_exit" else (0, 0, 0)
+
+
             
-            # Add a small buffer/thickness to ensure graph avoids the edges
-            cv2.polylines(occupancy, [pts_px], isClosed=True, color=0, thickness=int(0.5 * res))
+            # Fill with color
+            cv2.fillPoly(occupancy, [pts_px], color)
+            
+            # Add a small buffer/thickness
+            cv2.polylines(occupancy, [pts_px], isClosed=True, color=color, thickness=int(0.5 * res))
             
         return occupancy
+
