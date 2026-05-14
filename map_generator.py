@@ -101,3 +101,46 @@ class MapGenerator:
             
         print(f"Maps saved to {ortho_path} and {occ_path}")
         print(f"Metadata saved to {meta_path}")
+    def apply_parking_annotations(self, occupancy, json_path):
+        """
+        Reads parking space annotations from JSON and marks them as blocked (0) on the occupancy map.
+        """
+        if not os.path.exists(json_path):
+            return occupancy
+            
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+            
+        parking_spaces = data.get("parking_spaces", [])
+        if not parking_spaces:
+            return occupancy
+            
+        # Draw each polygon on the occupancy map
+        for space in parking_spaces:
+            points_m = np.array(space["points"])
+            
+            # Convert meters to pixels
+            # x_px = (x_m - min_x) * res
+            # y_px = (max_y - y_m) * res
+            bounds = data.get("metadata", {}).get("bounds")
+            res = data.get("metadata", {}).get("resolution", self.resolution)
+            
+            if not bounds:
+                # If metadata missing in JSON, we can't accurately convert unless we assume current session
+                continue
+                
+            pts_px = []
+            for pt in points_m:
+                u = int(round((pt[0] - bounds["min_x"]) * res))
+                v = int(round((bounds["max_y"] - pt[1]) * res))
+                pts_px.append([u, v])
+                
+            pts_px = np.array(pts_px, np.int32).reshape((-1, 1, 2))
+            
+            # Fill with black (blocked)
+            cv2.fillPoly(occupancy, [pts_px], 0)
+            
+            # Add a small buffer/thickness to ensure graph avoids the edges
+            cv2.polylines(occupancy, [pts_px], isClosed=True, color=0, thickness=int(0.5 * res))
+            
+        return occupancy

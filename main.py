@@ -6,6 +6,8 @@ from point_cloud_processor import PointCloudProcessor
 from map_generator import MapGenerator
 from kml_exporter import KMLExporter
 from road_graph_extractor import RoadGraphExtractor
+from json_exporter import JSONExporter
+
 
 def process_single_file(input_path, args):
     """Processes a single .ply file through the pipeline."""
@@ -79,7 +81,11 @@ def process_single_file(input_path, args):
     graph_ext = RoadGraphExtractor(min_lane_width=args.min_lane_width, pixels_per_meter=args.resolution)
     nodes, edges = graph_ext.extract_graph(occ, output_dir, blue_mask)
 
-    # 4. KML Export
+    # 4. JSON Export (Cartesian)
+    json_exp = JSONExporter(output_dir)
+    json_path = json_exp.export_graph(nodes, edges, bounds, args.resolution, filename=f"{file_basename}_graph.json")
+
+    # 5. KML Export (Optional/Secondary)
     exporter = KMLExporter(base_lat=args.lat, base_lon=args.lon)
     kml_path = os.path.join(output_dir, f"{file_basename}.kml")
     exporter.export_all(
@@ -91,6 +97,7 @@ def process_single_file(input_path, args):
         occ_path=occ_path,
         output_kml=kml_path
     )
+
 
     print(f"Finished processing {filename}. Results in {output_dir}")
 

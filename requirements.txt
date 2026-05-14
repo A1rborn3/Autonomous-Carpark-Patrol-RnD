@@ -1,7 +1,9 @@
 open3d
 numpy
 opencv-python
+opencv-contrib-python
 simplekml
 Pillow
 scikit-image
 scipy
+matplotlib

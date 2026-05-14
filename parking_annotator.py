@@ -341,8 +341,10 @@ class ParkingAnnotatorApp:
             data = {
                 "image_file": os.path.basename(self.image_path),
                 "coordinate_system": "meters" if self.map_metadata else "pixels",
+                "metadata": self.map_metadata,
                 "parking_spaces": converted_polygons
             }
+
             try:
                 with open(save_path, 'w') as f:
                     json.dump(data, f, indent=4)
