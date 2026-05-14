@@ -101,3 +101,56 @@ class MapGenerator:
             
         print(f"Maps saved to {ortho_path} and {occ_path}")
         print(f"Metadata saved to {meta_path}")
+    def apply_parking_annotations(self, occupancy, json_path):
+        """
+        Reads parking space annotations from JSON and marks them on the occupancy map.
+        - Parking Spots: Black (0, 0, 0)
+        - Entrances/Exits: Blue (255, 0, 0)
+        """
+        if not os.path.exists(json_path):
+            return occupancy
+            
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+            
+        parking_spaces = data.get("parking_spaces", [])
+        if not parking_spaces:
+            return occupancy
+            
+        # Ensure occupancy is BGR color to support blue
+        if len(occupancy.shape) == 2:
+            occupancy = cv2.cvtColor(occupancy, cv2.COLOR_GRAY2BGR)
+            
+        # Draw each polygon on the occupancy map
+        for space in parking_spaces:
+            points_m = np.array(space["points"])
+            poly_type = space.get("type", "parking_space")
+            
+            # Convert meters to pixels
+            bounds = data.get("metadata", {}).get("bounds")
+            res = data.get("metadata", {}).get("resolution", self.resolution)
+            
+            if not bounds:
+                continue
+                
+            pts_px = []
+            for pt in points_m:
+                u = int(round((pt[0] - bounds["min_x"]) * res))
+                v = int(round((bounds["max_y"] - pt[1]) * res))
+                pts_px.append([u, v])
+                
+            pts_px = np.array(pts_px, np.int32).reshape((-1, 1, 2))
+            
+            # BGR: Pure Blue is (255, 0, 0), Black is (0, 0, 0)
+            color = (255, 0, 0) if poly_type == "entrance_exit" else (0, 0, 0)
+
+
+            
+            # Fill with color
+            cv2.fillPoly(occupancy, [pts_px], color)
+            
+            # Add a small buffer/thickness
+            cv2.polylines(occupancy, [pts_px], isClosed=True, color=color, thickness=int(0.5 * res))
+            
+        return occupancy
+
