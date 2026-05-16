@@ -27,6 +27,11 @@ class ParkingAnnotatorApp:
         self.img_offset_y = 0
         self.current_poly_type = "parking_space" # "parking_space" or "entrance_exit"
         
+        self.carpark_types = {
+            "Regular": {"tag": "regular", "canvas_colour": "black", "bgr_color": (0,0,0)},
+            "Handicap": {"tag": "handicap", "canvas_colour": "blue", "bgr_color": (255,0,0)},
+            "60 Mins Max": {"tag": "60_mins_max", "canvas_colour": "red", "bgr_color": (0, 0, 255)}
+        }
         # UI Setup
 
         self.setup_ui()
@@ -58,8 +63,19 @@ class ParkingAnnotatorApp:
         self.type_frame = tk.Frame(btn_frame, padx=10)
         self.type_frame.pack(side=tk.LEFT)
         tk.Label(self.type_frame, text="Current Tool:").pack(side=tk.LEFT)
-        self.btn_type_park = tk.Button(self.type_frame, text="Parking Spot", command=lambda: self.set_tool("parking_space"), bg="lightblue", relief=tk.SUNKEN)
-        self.btn_type_park.pack(side=tk.LEFT, padx=2)
+
+        self.style_var = tk.StringVar(value="Regular")
+        
+        self.opt_type_park = tk.OptionMenu(
+            self.type_frame, 
+            self.style_var, 
+            *self.carpark_types.keys(),
+            command=lambda _: self.set_tool("parking_space")
+        )
+
+        self.opt_type_park.config(bg="lightblue") 
+        self.opt_type_park.pack(side=tk.LEFT, padx=2)
+
         self.btn_type_ent = tk.Button(self.type_frame, text="Entrance/Exit", command=lambda: self.set_tool("entrance_exit"))
         self.btn_type_ent.pack(side=tk.LEFT, padx=2)
 
@@ -379,11 +395,15 @@ class ParkingAnnotatorApp:
     def set_tool(self, tool_type):
         self.current_poly_type = tool_type
         if tool_type == "parking_space":
-            self.btn_type_park.config(relief=tk.SUNKEN, bg="lightblue")
+            selected_style = self.style_var.get()
+            tag = self.carpark_types[selected_style]["tag"]
+            
+            self.current_poly_type = f"parking_space_{tag}"
+            
             self.btn_type_ent.config(relief=tk.RAISED, bg="SystemButtonFace")
-            self.status_var.set("Tool: Parking Spot. Left-click to draw.")
+            self.status_var.set(f"Tool: Parking Spot ({selected_style}). Left-click to draw.")
         else:
-            self.btn_type_park.config(relief=tk.RAISED, bg="SystemButtonFace")
+            self.current_poly_type = "entrance_exit"
             self.btn_type_ent.config(relief=tk.SUNKEN, bg="blue", fg="white")
             self.status_var.set("Tool: Entrance/Exit. Left-click to draw. These will be marked as Blue (255,0,0) in occupancy.")
 
