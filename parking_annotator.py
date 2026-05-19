@@ -28,9 +28,9 @@ class ParkingAnnotatorApp:
         self.current_poly_type = "parking_space" # "parking_space" or "entrance_exit"
         
         self.carpark_types = {
-            "Regular": {"tag": "regular", "canvas_colour": "black", "bgr_color": (0,0,0)},
-            "Handicap": {"tag": "handicap", "canvas_colour": "blue", "bgr_color": (255,0,0)},
-            "60 Mins Max": {"tag": "60_mins_max", "canvas_colour": "red", "bgr_color": (0, 0, 255)}
+            "Regular": {"tag": "regular", "canvas_colour": "#0fdb16"},
+            "Handicap": {"tag": "handicap", "canvas_colour": "blue"},
+            "60 Mins Max": {"tag": "60_mins_max", "canvas_colour": "red"}
         }
         # UI Setup
 
@@ -305,16 +305,33 @@ class ParkingAnnotatorApp:
                 
                 # Draw filled polygon with outline
                 flat_points = [coord for pt in scaled_points for coord in pt]
-                color = 'blue' if poly.get('type') == 'entrance_exit' else 'cyan'
-                fill = 'blue' if poly.get('type') == 'entrance_exit' else ''
-                stipple = 'gray25' if poly.get('type') == 'entrance_exit' else ''
+                poly_type = poly.get('type')
+                
+                # Default colors
+                color = 'cyan'
+                fill = ''
+                stipple = ''
+                text_color = 'white'
+                
+                if poly_type == 'entrance_exit':
+                    color = 'blue'
+                    fill = 'blue'
+                    stipple = 'gray25'
+                    text_color = 'white'
+                elif poly_type.startswith('parking_space_'):
+                    tag = poly_type.replace('parking_space_', '')
+                    # Find colour and apply from dictionary
+                    for style_name, style_info in self.carpark_types.items():
+                        if style_info["tag"] == tag:
+                            color = style_info["canvas_colour"]
+                            text_color = 'white'
+                            break
                 
                 self.canvas.create_polygon(flat_points, outline=color, fill=fill, stipple=stipple, width=2, tags="poly")
                 
                 # Draw ID in the center
                 cx = sum([p[0] for p in scaled_points]) / len(scaled_points)
                 cy = sum([p[1] for p in scaled_points]) / len(scaled_points)
-                text_color = "white" if poly.get('type') == 'entrance_exit' else "red"
                 self.canvas.create_text(cx, cy, text=str(poly["id"]), fill=text_color, font=("Arial", 10, "bold"))
 
 
