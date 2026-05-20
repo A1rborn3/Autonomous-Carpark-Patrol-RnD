@@ -1,6 +1,10 @@
+import sys
+import os
+# Add parent directory to resolve imports of pipeline modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import tkinter as tk
 from tkinter import filedialog, messagebox
-import os
 import threading
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
