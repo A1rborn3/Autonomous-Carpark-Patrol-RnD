@@ -1,6 +1,10 @@
+import sys
+import os
+# Ensure the directory containing this script is in the Python path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-import os
 import threading
 import cv2
 import numpy as np

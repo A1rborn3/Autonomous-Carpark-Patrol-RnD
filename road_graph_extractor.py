@@ -53,7 +53,13 @@ class RoadGraphExtractor:
         try:
             skeleton = cv2.ximgproc.thinning(aisle_mask)
         except AttributeError:
-            skeleton_bool = morphology.skeletonize(aisle_mask > 0)
+            logging.warning("cv2.ximgproc.thinning is not available (opencv-contrib-python might not be installed). "
+                            "Falling back to skimage.morphology.skeletonize(method='zhang') for consistent graph extraction.")
+            try:
+                skeleton_bool = morphology.skeletonize(aisle_mask > 0, method='zhang')
+            except TypeError:
+                # Fallback for very old scikit-image versions that don't support method='zhang'
+                skeleton_bool = morphology.skeletonize(aisle_mask > 0)
             skeleton = (skeleton_bool * 255).astype(np.uint8)
             
         cv2.imwrite(os.path.join(output_dir, "skeleton.png"), skeleton)
