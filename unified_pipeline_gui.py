@@ -18,9 +18,10 @@ from road_graph_extractor import RoadGraphExtractor
 from json_exporter import JSONExporter
 
 class UnifiedPipelineGUI:
-    def __init__(self, root, on_pipeline_finished=None):
+    def __init__(self, root, on_pipeline_finished=None, on_map_generated=None):
         self.root = root
         self.on_pipeline_finished = on_pipeline_finished
+        self.on_map_generated = on_map_generated
         
         self.input_file = tk.StringVar()
         self.output_dir = tk.StringVar(value=os.path.join(os.path.dirname(os.path.abspath(__file__)), "output"))
@@ -146,6 +147,8 @@ class UnifiedPipelineGUI:
             self.root.after(0, lambda: self.display_map(self.current_ortho, self.current_bounds))
             self.root.after(0, lambda: self.status_var.set(f"Map ready. Saved to {output_dir}"))
             self.root.after(0, lambda: self.set_state("waiting_edit"))
+            if self.on_map_generated:
+                self.root.after(0, lambda: self.on_map_generated(ortho_path))
             
         except Exception as e:
             err_msg = str(e)

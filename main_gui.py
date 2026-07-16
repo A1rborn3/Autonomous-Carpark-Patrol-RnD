@@ -28,15 +28,23 @@ class MainApp:
         self.notebook.add(self.tab_annotator, text="Parking Annotator")
         
         # Instantiate Apps into Tabs
-        self.pipeline_app = UnifiedPipelineGUI(self.tab_pipeline, on_pipeline_finished=self.on_pipeline_finished)
+        self.pipeline_app = UnifiedPipelineGUI(
+            self.tab_pipeline,
+            on_pipeline_finished=self.on_pipeline_finished,
+            on_map_generated=self.on_map_generated
+        )
         self.annotator_app = ParkingAnnotatorApp(self.tab_annotator, on_annotations_saved=self.on_annotations_saved)
 
         
+    def on_map_generated(self, ortho_path):
+        """Callback triggered when the pipeline finishes generating a map image."""
+        self.annotator_app.load_image(ortho_path)
+
     def on_pipeline_finished(self, ortho_path):
         """Callback triggered when the pipeline finishes generating a map and graph."""
         # Switch to Annotator Tab
         self.notebook.select(self.tab_annotator)
-        # Load the generated image
+        # Load the generated image if not already loaded (or reload it)
         self.annotator_app.load_image(ortho_path)
         
     def on_annotations_saved(self, ortho_path):
