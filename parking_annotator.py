@@ -27,6 +27,11 @@ class ParkingAnnotatorApp:
         self.img_offset_y = 0
         self.current_poly_type = "parking_space" # "parking_space" or "entrance_exit"
         
+        self.carpark_types = {
+            "Regular": {"tag": "regular", "canvas_colour": "#0fdb16"},
+            "Handicap": {"tag": "handicap", "canvas_colour": "blue"},
+            "60 Mins Max": {"tag": "60_mins_max", "canvas_colour": "red"}
+        }
         # UI Setup
 
         self.setup_ui()
@@ -58,8 +63,19 @@ class ParkingAnnotatorApp:
         self.type_frame = tk.Frame(btn_frame, padx=10)
         self.type_frame.pack(side=tk.LEFT)
         tk.Label(self.type_frame, text="Current Tool:").pack(side=tk.LEFT)
-        self.btn_type_park = tk.Button(self.type_frame, text="Parking Spot", command=lambda: self.set_tool("parking_space"), bg="lightblue", relief=tk.SUNKEN)
-        self.btn_type_park.pack(side=tk.LEFT, padx=2)
+
+        self.style_var = tk.StringVar(value="Regular")
+        
+        self.opt_type_park = tk.OptionMenu(
+            self.type_frame, 
+            self.style_var, 
+            *self.carpark_types.keys(),
+            command=lambda _: self.set_tool("parking_space")
+        )
+
+        self.opt_type_park.config(bg="lightblue") 
+        self.opt_type_park.pack(side=tk.LEFT, padx=2)
+
         self.btn_type_ent = tk.Button(self.type_frame, text="Entrance/Exit", command=lambda: self.set_tool("entrance_exit"))
         self.btn_type_ent.pack(side=tk.LEFT, padx=2)
 
@@ -289,16 +305,33 @@ class ParkingAnnotatorApp:
                 
                 # Draw filled polygon with outline
                 flat_points = [coord for pt in scaled_points for coord in pt]
-                color = 'blue' if poly.get('type') == 'entrance_exit' else 'cyan'
-                fill = 'blue' if poly.get('type') == 'entrance_exit' else ''
-                stipple = 'gray25' if poly.get('type') == 'entrance_exit' else ''
+                poly_type = poly.get('type')
+                
+                # Default colors
+                color = 'cyan'
+                fill = ''
+                stipple = ''
+                text_color = 'white'
+                
+                if poly_type == 'entrance_exit':
+                    color = 'blue'
+                    fill = 'blue'
+                    stipple = 'gray25'
+                    text_color = 'white'
+                elif poly_type.startswith('parking_space_'):
+                    tag = poly_type.replace('parking_space_', '')
+                    # Find colour and apply from dictionary
+                    for style_name, style_info in self.carpark_types.items():
+                        if style_info["tag"] == tag:
+                            color = style_info["canvas_colour"]
+                            text_color = 'white'
+                            break
                 
                 self.canvas.create_polygon(flat_points, outline=color, fill=fill, stipple=stipple, width=2, tags="poly")
                 
                 # Draw ID in the center
                 cx = sum([p[0] for p in scaled_points]) / len(scaled_points)
                 cy = sum([p[1] for p in scaled_points]) / len(scaled_points)
-                text_color = "white" if poly.get('type') == 'entrance_exit' else "red"
                 self.canvas.create_text(cx, cy, text=str(poly["id"]), fill=text_color, font=("Arial", 10, "bold"))
 
 
@@ -379,11 +412,15 @@ class ParkingAnnotatorApp:
     def set_tool(self, tool_type):
         self.current_poly_type = tool_type
         if tool_type == "parking_space":
-            self.btn_type_park.config(relief=tk.SUNKEN, bg="lightblue")
+            selected_style = self.style_var.get()
+            tag = self.carpark_types[selected_style]["tag"]
+            
+            self.current_poly_type = f"parking_space_{tag}"
+            
             self.btn_type_ent.config(relief=tk.RAISED, bg="SystemButtonFace")
-            self.status_var.set("Tool: Parking Spot. Left-click to draw.")
+            self.status_var.set(f"Tool: Parking Spot ({selected_style}). Left-click to draw.")
         else:
-            self.btn_type_park.config(relief=tk.RAISED, bg="SystemButtonFace")
+            self.current_poly_type = "entrance_exit"
             self.btn_type_ent.config(relief=tk.SUNKEN, bg="blue", fg="white")
             self.status_var.set("Tool: Entrance/Exit. Left-click to draw. These will be marked as Blue (255,0,0) in occupancy.")
 
