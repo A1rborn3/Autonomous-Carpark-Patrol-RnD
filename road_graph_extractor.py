@@ -45,17 +45,13 @@ class RoadGraphExtractor:
         logging.info("Detecting nodes and edges...")
         skel_norm = (skeleton // 255).astype(np.uint8)
         
-        # Count 8-connected neighbors to find junctions
-        kernel_3x3 = np.array([[1, 1, 1],
-                               [1, 0, 1],
-                               [1, 1, 1]], dtype=np.uint8)
+        kernel_3x3 = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
         neighbor_count = cv2.filter2D(skel_norm, -1, kernel_3x3, borderType=cv2.BORDER_CONSTANT)
         
         junction_mask = (neighbor_count >= 3) & (skel_norm == 1)
         junction_y, junction_x = np.where(junction_mask)
         junctions = list(zip(junction_y, junction_x))
         
-        # Break skeleton cleanly at junctions to isolate segments
         junction_dilated = cv2.dilate(junction_mask.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=1)
         segments_mask = skel_norm.copy()
         segments_mask[junction_dilated > 0] = 0
@@ -72,7 +68,6 @@ class RoadGraphExtractor:
             ordered_pts = self._chain_points(pts)
             if len(ordered_pts) >= 2:
                 pts_np = np.array(ordered_pts, dtype=np.int32).reshape((-1, 1, 2))
-                # LARGE epsilon to aggressively straighten segments
                 epsilon = 1.5 * self.pixels_per_meter
                 approx = cv2.approxPolyDP(pts_np, epsilon, closed=False)
                 line = [{'x': float(pt[0][0]), 'y': float(pt[0][1])} for pt in approx]
@@ -199,7 +194,7 @@ class RoadGraphExtractor:
                 cx, cy = centroids[i]
                 entrance_centers.append({'x': float(cx), 'y': float(cy)})
                 
-        # 10. Aggressive Spur Pruning (The critical fix)
+        # 10. Aggressive Spur Pruning (Fixed to catch short terminating nodes)
         merged_nodes, edges = self._prune_spurs(merged_nodes, edges, dist_transform, entrance_centers, blue_mask)
 
         # 11. Visual Debugging Output
@@ -226,168 +221,194 @@ class RoadGraphExtractor:
         return merged_nodes, edges
 
     def _prune_spurs(self, nodes, edges, dist_transform, entrance_centers, blue_mask=None):
-               #return nodes, edges #THIS IS JUST FOR TESTING TO SKIP MODULE, REMOVE FOR DEPLOYMENT
-               # Build adjacency list
-               adj = {n['id']: set() for n in nodes}
-               for e in edges:
-                   adj[e['from_id']].add(e['to_id'])
-                   adj[e['to_id']].add(e['from_id'])
-                   
-               node_dict = {n['id']: n for n in nodes}
-               removed_nodes = set()
-               
-               while True:
-                   # Find all current endpoints
-                   degree1 = [n_id for n_id, nbrs in adj.items() if len(nbrs) == 1]
-                   pruned_any = False
-                   
-                   for leaf in degree1:
-                       curr = leaf
-                       prev = None
-                       branch_len = 0
-                       path_nodes = [curr]
-                       
-                       # Walk the branch until we hit an intersection (degree > 2)
-                       while True:
-                           nbrs = list(adj[curr])
-                           # Break if we hit a branch point (degree >= 3)
-                           if len(nbrs) >= 3:
-                               break
-                           # Break if we hit another endpoint (and it's not the start node)
-                           if len(nbrs) == 1 and curr != leaf:
-                               break
-                           # Break if isolated
-                           if len(nbrs) == 0:
-                               break 
-                           
-                           # Get the next node that isn't the previous one
-                           next_node = nbrs[0] if nbrs[0] != prev else (nbrs[1] if len(nbrs) > 1 else None)
-                           if next_node is None:
-                               break
-                               
-                           # Calculate distance
-                           n1, n2 = node_dict[curr], node_dict[next_node]
-                           dist = np.hypot(n1['x'] - n2['x'], n1['y'] - n2['y'])
-                           branch_len += dist
-                           
-                           prev = curr
-                           curr = next_node
-                           path_nodes.append(curr)
-                               
-                       # Get the branch point (intersection)
-                       bp = node_dict[curr]
-                       
-                       # We need R for multiple checks
-                       bp_y = int(np.clip(bp['y'], 0, dist_transform.shape[0]-1))
-                       bp_x = int(np.clip(bp['x'], 0, dist_transform.shape[1]-1))
-                       R = float(dist_transform[bp_y, bp_x])
-                       if R < 1.0:
-                           R = (self.min_lane_width * self.pixels_per_meter) / 2.0
-                           
-                       is_protected = False
-                       
-                       # --- Manual Entrance Pinning ---
-                       # Check if this leaf node is near the CENTROID of any painted entrance.
-                       leaf_node = node_dict[leaf]
-                       for center in entrance_centers:
-                           dist_to_center = np.hypot(leaf_node['x'] - center['x'], leaf_node['y'] - center['y'])
-                           # 4.2 meters tolerance from the exact center of the blue mass
-                           if dist_to_center < 4.2 * self.pixels_per_meter: 
-                               is_protected = True
-                               break
-                       
-                       # --- Angle Protection ---
-                       nbrs = list(adj[curr])
-                       if len(nbrs) >= 3:
-                           import math
-                           vectors = {}
-                           for nbr_id in nbrs:
-                               nbr_node = node_dict[nbr_id]
-                               vx = nbr_node['x'] - bp['x']
-                               vy = nbr_node['y'] - bp['y']
-                               mag = math.hypot(vx, vy)
-                               if mag > 0:
-                                   vectors[nbr_id] = (vx/mag, vy/mag)
-                               else:
-                                   vectors[nbr_id] = (0, 0)
-                                   
-                           min_dot = 1.0
-                           best_pair = None
-                           nbr_ids = list(vectors.keys())
-                           for i in range(len(nbr_ids)):
-                               for j in range(i+1, len(nbr_ids)):
-                                   id1, id2 = nbr_ids[i], nbr_ids[j]
-                                   v1, v2 = vectors[id1], vectors[id2]
-                                   dot = v1[0]*v2[0] + v1[1]*v2[1]
-                                   if dot < min_dot:
-                                       min_dot = dot
-                                       best_pair = (id1, id2)
-                                       
-                           if best_pair and min_dot < -0.866:
-                               if prev in best_pair:
-                                   is_protected = True
-                                   
-                       if is_protected:
-                           continue # Skip pruning
-                       
-                       # --- Length Pruning ---
-                       local_max_spur_len = 2.0 * R
-                       
-                       if branch_len < local_max_spur_len:
-                           for n_id in path_nodes[:-1]:
-                               removed_nodes.add(n_id)
-                               for neighbor in list(adj[n_id]):
-                                   adj[neighbor].discard(n_id)
-                               adj[n_id].clear()
-                           pruned_any = True
-                           
-                   if not pruned_any:
-                       break
-                       
-               # Filter the final nodes and edges
-               final_nodes = [n for n in nodes if n['id'] not in removed_nodes]
-               final_edges = [e for e in edges if e['from_id'] not in removed_nodes and e['to_id'] not in removed_nodes]
-               
-               # Recompute types
-               degree = {n['id']: 0 for n in final_nodes}
-               for e in final_edges:
-                   degree[e['from_id']] += 1
-                   degree[e['to_id']] += 1
-                   
-               # Completely remove any nodes that were left totally isolated by the pruning
-               final_nodes = [n for n in final_nodes if degree[n['id']] > 0]
-                   
-               # Default all to waypoints
-               for n in final_nodes:
-                   n['type'] = 'waypoint'
-                   
-               # Tag ONLY the single closest node for each manually painted entrance center
-               if entrance_centers:
-                   node_coords = np.array([[n['x'], n['y']] for n in final_nodes])
-                   node_tree = KDTree(node_coords)
-                   for center in entrance_centers:
-                       dist, idx = node_tree.query([center['x'], center['y']])
-                       if dist < 10.0 * self.pixels_per_meter:
-                           final_nodes[idx]['type'] = 'entrance_exit'
-       
-               # FINAL STEP: Re-index everything so IDs are sequential and clean for the USER
-               # This resolves the confusion where IDs suggest more nodes than actually exist.
-               id_map = {}
-               for i, node in enumerate(final_nodes):
-                   old_id = node['id']
-                   new_id = f"node_{i}"
-                   node['id'] = new_id
-                   id_map[old_id] = new_id
-                   
-               for i, edge in enumerate(final_edges):
-                   edge['id'] = f"edge_{i}"
-                   edge['from_id'] = id_map[edge['from_id']]
-                   edge['to_id'] = id_map[edge['to_id']]
-                   # Remove internal indices as they are no longer accurate/needed
-                   if 'from_idx' in edge: del edge['from_idx']
-                   if 'to_idx' in edge: del edge['to_idx']
-                           
-               return final_nodes, final_edges
+        # Build adjacency list
+        adj = {n['id']: set() for n in nodes}
+        for e in edges:
+            adj[e['from_id']].add(e['to_id'])
+            adj[e['to_id']].add(e['from_id'])
+            
+        node_dict = {n['id']: n for n in nodes}
+        removed_nodes = set()
+        
+        while True:
+            # Find all current endpoints
+            degree1 = [n_id for n_id, nbrs in adj.items() if len(nbrs) == 1]
+            pruned_any = False
+            
+            for leaf in degree1:
+                curr = leaf
+                prev = None
+                branch_len = 0
+                path_nodes = [curr]
+                
+                # Walk the branch until we hit an intersection (degree > 2)
+                while True:
+                    nbrs = list(adj[curr])
+                    if len(nbrs) >= 3:
+                        break
+                    if len(nbrs) == 1 and curr != leaf:
+                        break
+                    if len(nbrs) == 0:
+                        break 
+                    
+                    next_node = nbrs[0] if nbrs[0] != prev else (nbrs[1] if len(nbrs) > 1 else None)
+                    if next_node is None:
+                        break
+                        
+                    n1, n2 = node_dict[curr], node_dict[next_node]
+                    dist = np.hypot(n1['x'] - n2['x'], n1['y'] - n2['y'])
+                    branch_len += dist
+                    
+                    prev = curr
+                    curr = next_node
+                    path_nodes.append(curr)
+                        
+                # Get the branch point (intersection)
+                bp = node_dict[curr]
+                
+                bp_y = int(np.clip(bp['y'], 0, dist_transform.shape[0]-1))
+                bp_x = int(np.clip(bp['x'], 0, dist_transform.shape[1]-1))
+                R = float(dist_transform[bp_y, bp_x])
+                if R < 1.0:
+                    R = (self.min_lane_width * self.pixels_per_meter) / 2.0
+                    
+                is_protected = False
+                
+                # --- Manual Entrance Pinning ---
+                leaf_node = node_dict[leaf]
+                for center in entrance_centers:
+                    dist_to_center = np.hypot(leaf_node['x'] - center['x'], leaf_node['y'] - center['y'])
+                    if dist_to_center < 4.2 * self.pixels_per_meter: 
+                        is_protected = True
+                        break
+                
+                # --- Angle Protection ---
+                nbrs = list(adj[curr])
+                if len(nbrs) >= 3:
+                    vectors = {}
+                    for nbr_id in nbrs:
+                        nbr_node = node_dict[nbr_id]
+                        vx = nbr_node['x'] - bp['x']
+                        vy = nbr_node['y'] - bp['y']
+                        mag = np.hypot(vx, vy)
+                        if mag > 0:
+                            vectors[nbr_id] = (vx/mag, vy/mag)
+                        else:
+                            vectors[nbr_id] = (0, 0)
+                            
+                    min_dot = 1.0
+                    best_pair = None
+                    nbr_ids = list(vectors.keys())
+                    for i in range(len(nbr_ids)):
+                        for j in range(i+1, len(nbr_ids)):
+                            id1, id2 = nbr_ids[i], nbr_ids[j]
+                            v1, v2 = vectors[id1], vectors[id2]
+                            dot = v1[0]*v2[0] + v1[1]*v2[1]
+                            if dot < min_dot:
+                                min_dot = dot
+                                best_pair = (id1, id2)
+                                
+                    if best_pair and min_dot < -0.866:
+                        if prev in best_pair:
+                            is_protected = True
+                            
+                if is_protected:
+                    continue # Skip pruning
+                
+                # --- FIXED Length Pruning ---
+                # In narrow corridors, R is small, making 2.0*R too small to catch short artifacts.
+                # We enforce an absolute minimum threshold (1.0 lane width) to aggressively 
+                # clean up short terminating stubs, while still respecting R in wide areas.
+                absolute_min_spur_threshold = 1.0 * self.min_lane_width * self.pixels_per_meter
+                local_max_spur_len = max(absolute_min_spur_threshold, 2.0 * R)
+                
+                if branch_len < local_max_spur_len:
+                    for n_id in path_nodes[:-1]:
+                        removed_nodes.add(n_id)
+                        for neighbor in list(adj[n_id]):
+                            adj[neighbor].discard(n_id)
+                        adj[n_id].clear()
+                    pruned_any = True
+                    
+            if not pruned_any:
+                break
+                
+        # Filter the final nodes and edges
+        final_nodes = [n for n in nodes if n['id'] not in removed_nodes]
+        final_edges = [e for e in edges if e['from_id'] not in removed_nodes and e['to_id'] not in removed_nodes]
+        
+        # FINAL SURGICAL CLEANUP: Remove any remaining degree-1 nodes connected by a tiny edge
+        # This catches artifacts that slipped through the branch walking logic
+        changed = True
+        while changed:
+            changed = False
+            adj = {n['id']: set() for n in final_nodes}
+            for e in final_edges:
+                adj[e['from_id']].add(e['to_id'])
+                adj[e['to_id']].add(e['from_id'])
+            
+            node_dict = {n['id']: n for n in final_nodes}
+            to_remove = []
+            
+            for n_id, neighbors in adj.items():
+                if len(neighbors) == 1 and node_dict[n_id].get('type') != 'entrance_exit':
+                    neighbor_id = list(neighbors)[0]
+                    # If the neighbor is also a degree-1 node, it's an isolated segment, keep it
+                    if len(adj[neighbor_id]) == 1:
+                        continue 
+                    
+                    n1 = node_dict[n_id]
+                    n2 = node_dict[neighbor_id]
+                    dist = np.hypot(n1['x'] - n2['x'], n1['y'] - n2['y'])
+                    
+                    # If the terminating edge is shorter than 0.5 lane widths, prune it
+                    if dist < (0.5 * self.min_lane_width * self.pixels_per_meter):
+                        to_remove.append(n_id)
+            
+            if to_remove:
+                changed = True
+                for n_id in to_remove:
+                    final_nodes = [n for n in final_nodes if n['id'] != n_id]
+                    final_edges = [e for e in final_edges if e['from_id'] != n_id and e['to_id'] != n_id]
+
+        # Recompute types
+        degree = {n['id']: 0 for n in final_nodes}
+        for e in final_edges:
+            degree[e['from_id']] += 1
+            degree[e['to_id']] += 1
+            
+        # Completely remove any nodes that were left totally isolated by the pruning
+        final_nodes = [n for n in final_nodes if degree[n['id']] > 0]
+            
+        # Default all to waypoints
+        for n in final_nodes:
+            n['type'] = 'waypoint'
+            
+        # Tag ONLY the single closest node for each manually painted entrance center
+        if entrance_centers:
+            node_coords = np.array([[n['x'], n['y']] for n in final_nodes])
+            node_tree = KDTree(node_coords)
+            for center in entrance_centers:
+                dist, idx = node_tree.query([center['x'], center['y']])
+                if dist < 10.0 * self.pixels_per_meter:
+                    final_nodes[idx]['type'] = 'entrance_exit'
+
+        # FINAL STEP: Re-index everything so IDs are sequential and clean
+        id_map = {}
+        for i, node in enumerate(final_nodes):
+            old_id = node['id']
+            new_id = f"node_{i}"
+            node['id'] = new_id
+            id_map[old_id] = new_id
+            
+        for i, edge in enumerate(final_edges):
+            edge['id'] = f"edge_{i}"
+            edge['from_id'] = id_map[edge['from_id']]
+            edge['to_id'] = id_map[edge['to_id']]
+            if 'from_idx' in edge: del edge['from_idx']
+            if 'to_idx' in edge: del edge['to_idx']
+                    
+        return final_nodes, final_edges
 
     def _chain_points(self, pts):
         """Orders unordered skeleton pixels into a continuous path."""
