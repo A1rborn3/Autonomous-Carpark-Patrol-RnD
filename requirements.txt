@@ -13,3 +13,6 @@ matplotlib>=3.7.0
 
 #3D Processing
 open3d>=0.17.0
+
+#Computer Vision
+ultralytics==8.4.112
