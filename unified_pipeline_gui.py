@@ -16,6 +16,8 @@ from point_cloud_processor import PointCloudProcessor
 from map_generator import MapGenerator
 from road_graph_extractor import RoadGraphExtractor
 from json_exporter import JSONExporter
+from unitree_exporter import UnitreeGo2Exporter
+
 
 class UnifiedPipelineGUI:
     def __init__(self, root, on_pipeline_finished=None, on_map_generated=None):
@@ -214,8 +216,13 @@ class UnifiedPipelineGUI:
             json_exp = JSONExporter(output_dir)
             json_path = json_exp.export_graph(nodes, edges, self.current_bounds, self.resolution.get(), filename=f"{self.file_basename}_graph.json")
             
+            # Unitree Go2 Export
+            unitree_exp = UnitreeGo2Exporter(output_dir)
+            unitree_exp.export_unitree_waypoints(nodes, edges, self.current_bounds, self.resolution.get(), filename_prefix=self.file_basename)
+
             self.root.after(0, lambda: self.display_graph(nodes, edges))
-            self.root.after(0, lambda: self.status_var.set(f"Graph extracted and saved to JSON."))
+            self.root.after(0, lambda: self.status_var.set(f"Graph extracted & Unitree Go2 waypoints saved."))
+
             
             if self.on_pipeline_finished:
                 ortho_path = os.path.join(output_dir, "orthomosaic.png")

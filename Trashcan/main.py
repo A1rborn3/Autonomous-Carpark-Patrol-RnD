@@ -10,6 +10,8 @@ from map_generator import MapGenerator
 from kml_exporter import KMLExporter
 from road_graph_extractor import RoadGraphExtractor
 from json_exporter import JSONExporter
+from unitree_exporter import UnitreeGo2Exporter
+
 
 
 def process_single_file(input_path, args):
@@ -101,8 +103,13 @@ def process_single_file(input_path, args):
         output_kml=kml_path
     )
 
+    # 6. Unitree Go2 (G02) Robot Dog Waypoints & Runner Export
+    unitree_exp = UnitreeGo2Exporter(output_dir, base_lat=args.lat, base_lon=args.lon)
+    unitree_exp.export_unitree_waypoints(nodes, edges, bounds, args.resolution, filename_prefix=file_basename)
+
 
     print(f"Finished processing {filename}. Results in {output_dir}")
+
 
 import re
 
