@@ -406,6 +406,9 @@ class ParkingAnnotatorApp:
                 messagebox.showinfo("Success", f"Saved {len(self.polygons)} parking spaces to {os.path.basename(save_path)}")
                 self.status_var.set(f"Saved to {os.path.basename(save_path)}.")
                 
+                if self.on_annotations_saved:
+                    self.on_annotations_saved(self.image_path)
+                
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save file:\n{e}")
 
@@ -459,10 +462,9 @@ class ParkingAnnotatorApp:
             park_occ_path = os.path.join(base_dir, "parking_occupancy.png")
             cv2.imwrite(park_occ_path, parking_occ)
             
-            if self.on_annotations_saved:
-                self.on_annotations_saved(self.image_path)
         except Exception as img_e:
             print(f"Failed to create live parking occupancy image: {img_e}")
+
 
 
 if __name__ == "__main__":

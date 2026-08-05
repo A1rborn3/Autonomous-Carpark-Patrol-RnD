@@ -20,10 +20,11 @@ from unitree_exporter import UnitreeGo2Exporter
 
 
 class UnifiedPipelineGUI:
-    def __init__(self, root, on_pipeline_finished=None, on_map_generated=None):
+    def __init__(self, root, on_pipeline_finished=None, on_map_generated=None, on_graph_extracted=None):
         self.root = root
         self.on_pipeline_finished = on_pipeline_finished
         self.on_map_generated = on_map_generated
+        self.on_graph_extracted = on_graph_extracted
         
         self.input_file = tk.StringVar()
         self.output_dir = tk.StringVar(value=os.path.join(os.path.dirname(os.path.abspath(__file__)), "output"))
@@ -69,8 +70,6 @@ class UnifiedPipelineGUI:
         self.btn_run = tk.Button(self.left_panel, text="Start Pipeline", command=self.run_full_pipeline, bg="green", fg="black", font=("Arial", 11, "bold"))
         self.btn_run.pack(fill=tk.X, pady=5)
         
-        self.btn_extract_only = tk.Button(self.left_panel, text="Extract Graph Only", command=self.run_graph_extraction, state=tk.DISABLED)
-        self.btn_extract_only.pack(fill=tk.X, pady=5)
         
         # Status
         self.status_var = tk.StringVar(value="Ready")
@@ -112,14 +111,11 @@ class UnifiedPipelineGUI:
         self.processing_state = state
         if state == "idle":
             self.btn_run.config(state=tk.NORMAL, text="Start Pipeline")
-            self.btn_extract_only.config(state=tk.DISABLED)
         elif state == "mapping":
             self.btn_run.config(state=tk.DISABLED)
-            self.btn_extract_only.config(state=tk.DISABLED)
         elif state == "waiting_edit":
             self.btn_run.config(state=tk.NORMAL, text="Re-run Pipeline", bg="orange")
-            self.btn_extract_only.config(state=tk.NORMAL)
-            messagebox.showinfo("Step Finished", "Map generated. You can manually edit the occupancy map or proceed to graph extraction.")
+            messagebox.showinfo("Step Finished", "Map generated. Proceed to Carpark Annotator & Robot Line Plotter.")
             
     def _pipeline_thread(self, input_path):
         try:
@@ -170,17 +166,17 @@ class UnifiedPipelineGUI:
             park_json_path = os.path.join(output_dir, "orthomosaic_parking_spaces.json")
             
             occ = cv2.imread(occ_path, cv2.IMREAD_GRAYSCALE)
+            map_gen = MapGenerator(resolution=self.resolution.get())
             
             # Merge parking annotations from JSON if they exist
             if os.path.exists(park_json_path):
                 self.root.after(0, lambda: self.status_var.set("Applying parking annotations from JSON..."))
-                map_gen = MapGenerator(resolution=self.resolution.get())
                 occ = map_gen.apply_parking_annotations(occ, park_json_path)
                 
-                # Save the merged occupancy used for graph extraction
-                merged_path = os.path.join(output_dir, "merged_occupancy.png")
-                cv2.imwrite(merged_path, occ)
-                self.status_var.set(f"Merged occupancy saved to {os.path.basename(merged_path)}")
+            # Save the merged occupancy used for graph extraction
+            merged_path = os.path.join(output_dir, "merged_occupancy.png")
+            cv2.imwrite(merged_path, occ)
+            self.status_var.set(f"Merged occupancy saved to {os.path.basename(merged_path)}")
             
             # Also support the direct image merge as a secondary check/live update
             park_img_path = os.path.join(output_dir, "parking_occupancy.png")
@@ -209,20 +205,27 @@ class UnifiedPipelineGUI:
 
             
             graph_ext = RoadGraphExtractor(min_lane_width=self.min_lane_width.get(), pixels_per_meter=self.resolution.get())
-            nodes, edges = graph_ext.extract_graph(occ, output_dir, blue_mask)
+            
+            # Save automated outputs to a dedicated subfolder
+            auto_output_dir = os.path.join(output_dir, "Automated Output")
+            os.makedirs(auto_output_dir, exist_ok=True)
+            
+            nodes, edges = graph_ext.extract_graph(occ, auto_output_dir, blue_mask)
 
             
             # JSON Export
-            json_exp = JSONExporter(output_dir)
+            json_exp = JSONExporter(auto_output_dir)
             json_path = json_exp.export_graph(nodes, edges, self.current_bounds, self.resolution.get(), filename=f"{self.file_basename}_graph.json")
             
             # Unitree Go2 Export
-            unitree_exp = UnitreeGo2Exporter(output_dir)
+            unitree_exp = UnitreeGo2Exporter(auto_output_dir)
             unitree_exp.export_unitree_waypoints(nodes, edges, self.current_bounds, self.resolution.get(), filename_prefix=self.file_basename)
 
             self.root.after(0, lambda: self.display_graph(nodes, edges))
             self.root.after(0, lambda: self.status_var.set(f"Graph extracted & Unitree Go2 waypoints saved."))
 
+            if self.on_graph_extracted:
+                self.root.after(0, lambda: self.on_graph_extracted(nodes, edges))
             
             if self.on_pipeline_finished:
                 ortho_path = os.path.join(output_dir, "orthomosaic.png")

@@ -154,3 +154,51 @@ class MapGenerator:
             
         return occupancy
 
+    def apply_robot_route_annotations(self, occupancy, json_path):
+        """
+        Reads manual robot route annotations from JSON and marks them on the occupancy map.
+        Marks drawn polylines in Blue (255, 0, 0) and ensures surrounding corridor is white (255, 255, 255).
+        """
+        if not os.path.exists(json_path):
+            return occupancy
+
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+
+        lines = data.get("lines", [])
+        if not lines:
+            return occupancy
+
+        if len(occupancy.shape) == 2:
+            occupancy = cv2.cvtColor(occupancy, cv2.COLOR_GRAY2BGR)
+
+        bounds = data.get("metadata", {}).get("bounds")
+        res = data.get("metadata", {}).get("resolution", self.resolution)
+
+        if not bounds:
+            return occupancy
+
+        lane_width_px = int(round(1.5 * res))  # Walkable lane around path
+        blue_line_px = max(2, int(round(0.3 * res)))  # Blue core line
+
+        for line_item in lines:
+            points_m = np.array(line_item["points"])
+            if len(points_m) < 2:
+                continue
+
+            pts_px = []
+            for pt in points_m:
+                u = int(round((pt[0] - bounds["min_x"]) * res))
+                v = int(round((bounds["max_y"] - pt[1]) * res))
+                pts_px.append([u, v])
+
+            pts_px = np.array(pts_px, np.int32).reshape((-1, 1, 2))
+
+            # First, ensure walkable corridor (white)
+            cv2.polylines(occupancy, [pts_px], isClosed=False, color=(255, 255, 255), thickness=lane_width_px)
+            # Then draw blue core path
+            cv2.polylines(occupancy, [pts_px], isClosed=False, color=(255, 0, 0), thickness=blue_line_px)
+
+        return occupancy
+
+
