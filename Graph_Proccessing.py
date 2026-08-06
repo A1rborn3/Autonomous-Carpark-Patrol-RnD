@@ -174,7 +174,7 @@ class GraphProcessor:
                         # Flip the perpendicular vector to swap side 1 and side 2
                         # This prevents the "X" crossing when connecting boundary nodes later
                         road_dir_x = -map_road_dir_y 
-                        road_dir_y = -map_road_dir_x
+                        road_dir_y = -map_road_dir_x #-/+ to edit 90 degree rotation
                         
                         valid_dir = True
             #elif for 3 edge nodes
@@ -224,6 +224,7 @@ class GraphProcessor:
                     })
                     new_node_id_counter += 1
 
+        boundary_nodes = self.fix_overlapping_cross_sections(boundary_nodes)
         output_graph = {"nodes": boundary_nodes, "edges": []}
         output_path = self.output_dir / "Smart_Parking_Park_boundary_graph.json"
         with open(output_path, 'w') as f:
@@ -231,7 +232,7 @@ class GraphProcessor:
             
         print(f"Successfully generated {len(boundary_nodes)} boundary nodes.")
         print(f"Saved to: {output_path}")
-        
+
         self.visualize_boundaries(all_nodes, all_edges, boundary_nodes)
 
 
@@ -273,7 +274,6 @@ class GraphProcessor:
     def visualize_boundaries(self, all_nodes, all_edges, boundary_nodes):
         print("\n--- Generating Visual Debug Image ---")
         
-        # 1. Get metadata for coordinate conversion
         metadata_path = self.output_dir / "map_metadata.json"
         pixels_per_meter = 70.0
         min_x, max_y = 0.0, 0.0
@@ -286,7 +286,6 @@ class GraphProcessor:
                 min_x = float(bounds.get('min_x', 0.0))
                 max_y = float(bounds.get('max_y', 0.0))
                 
-        # 2. Load occupancy image
         occ_path = self.output_dir / "merged_occupancy.png"
         if not occ_path.exists():
             occ_path = self.output_dir / "occupancy_clean.png"
@@ -296,44 +295,69 @@ class GraphProcessor:
             print("Error: Failed to load occupancy image for visualization.")
             return
             
-        # Convert to BGR so we can draw colors
         vis_img = cv2.cvtColor(occupancy_img, cv2.COLOR_GRAY2BGR)
         
-        # Helper to convert meters to pixels (with Y-axis flip)
         def m_to_px(x_m, y_m):
             px = int((x_m - min_x) * pixels_per_meter)
             py = int((max_y - y_m) * pixels_per_meter)
             return (px, py)
 
-        # 3. Draw Original Edges (Red)
         node_dict = {n.node_id: n for n in all_nodes}
+        
+        # 1. Draw Original Edges (Red)
         for edge in all_edges:
             n1 = node_dict.get(edge.from_id)
             n2 = node_dict.get(edge.to_id)
             if n1 and n2:
                 cv2.line(vis_img, m_to_px(n1.x, n1.y), m_to_px(n2.x, n2.y), (0, 0, 255), 2)
 
-        # 4. Draw Original Nodes (Blue)
+        # 2. Draw Original Nodes (Blue)
         for n in all_nodes:
             cv2.circle(vis_img, m_to_px(n.x, n.y), 6, (255, 0, 0), -1)
-            # Optional: draw node ID text
-            # cv2.putText(vis_img, str(n.node_id), m_to_px(n.x, n.y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
-        # 5. Draw Boundary Nodes and Connecting Lines
+        # 3. Draw Cross-Sections (Magenta) to visualize overlaps
+        parents = {}
+        for bn in boundary_nodes:
+            pid = bn['parent_node']
+            if isinstance(pid, list): 
+                continue # Skip merged nodes to avoid crashes
+            if pid not in parents: 
+                parents[pid] = {}
+            parents[pid][bn['side']] = bn
+            
+        for pid, sides in parents.items():
+            if 'perp_side_1' in sides and 'perp_side_2' in sides:
+                p1 = m_to_px(sides['perp_side_1']['x'], sides['perp_side_1']['y'])
+                p2 = m_to_px(sides['perp_side_2']['x'], sides['perp_side_2']['y'])
+                cv2.line(vis_img, p1, p2, (255, 0, 255), 1) # Magenta lines
+
+        # 4. Draw Boundary Nodes and Connecting Lines
         for bn in boundary_nodes:
             bn_px = m_to_px(bn['x'], bn['y'])
             
-            # Color code the sides (Green for side 1, Yellow for side 2)
-            color = (0, 255, 0) if bn['side'] == 'perp_side_1' else (0, 255, 255)
-            cv2.circle(vis_img, bn_px, 4, color, -1)
+            # Check if this is the extra merged node
+            is_merged = isinstance(bn['parent_node'], list) or bn.get('type') == 'boundary_merged'
             
-            # Draw a line from the parent node to the boundary node to show the offset
-            parent_node = node_dict.get(bn['parent_node'])
-            if parent_node:
-                parent_px = m_to_px(parent_node.x, parent_node.y)
-                cv2.line(vis_img, parent_px, bn_px, (255, 255, 0), 1) # Cyan lines
+            if is_merged:
+                # Draw the extra merged node prominently (Larger white circle with black border)
+                cv2.circle(vis_img, bn_px, 8, (0, 0, 0), -1)   # Black outer ring
+                cv2.circle(vis_img, bn_px, 6, (255, 255, 255), -1) # White inner fill
+                
+                # Optional: Draw a small text label so you can spot it easily
+                cv2.putText(vis_img, "M", (int(bn_px[0])+10, int(bn_px[1])-10), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            else:
+                # Standard boundary nodes (Green for side 1, Yellow for side 2)
+                color = (0, 255, 0) if bn['side'] == 'perp_side_1' else (0, 255, 255)
+                cv2.circle(vis_img, bn_px, 4, color, -1)
+                
+                # Draw cyan line connecting standard nodes to their parent
+                parent_node = node_dict.get(bn['parent_node'])
+                if parent_node:
+                    parent_px = m_to_px(parent_node.x, parent_node.y)
+                    cv2.line(vis_img, parent_px, bn_px, (255, 255, 0), 1) 
 
-        # 6. Save the image
+        # 5. Save the image
         out_path = self.output_dir / "boundary_visual_debug.png"
         cv2.imwrite(str(out_path), vis_img)
         print(f"Saved visual debug to: {out_path}")
@@ -380,77 +404,110 @@ class GraphProcessor:
             
         return curr_x, curr_y
 
-    def _resolve_segment_intersection(self, node_a, node_b, dist_transform, clearance_m, pixels_per_meter, min_x, max_y, depth=0):
-        """
-        Recursively checks a line segment between two boundary nodes. 
-        If it intersects an obstacle, it inserts a new 'corner' node on the 0.5m boundary.
-        """
-        # Prevent infinite recursion on extremely sharp corners
-        if depth > 5:  
-            return [node_b]
 
-        # Convert meters to pixels
-        px1 = int((node_a['x'] - min_x) * pixels_per_meter)
-        py1 = int((max_y - node_a['y']) * pixels_per_meter)
-        px2 = int((node_b['x'] - min_x) * pixels_per_meter)
-        py2 = int((max_y - node_b['y']) * pixels_per_meter)
+    
+    
+    def _on_segment(self, p, q, r):
+            """Checks if point q lies on segment pr."""
+            if (min(p[0], r[0]) <= q[0] <= max(p[0], r[0]) and 
+                min(p[1], r[1]) <= q[1] <= max(p[1], r[1])):
+                return True
+            return False
+
+    def _segments_intersect(self, p1, p2, p3, p4):
+        """Checks if line segment p1-p2 intersects with line segment p3-p4."""
+        def cross(o, a, b):
+            return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
         
-        # Sample points along the line to find the closest point to an obstacle
-        min_dist = float('inf')
-        worst_px, worst_py = px1, py1
+        d1 = cross(p3, p4, p1)
+        d2 = cross(p3, p4, p2)
+        d3 = cross(p1, p2, p3)
+        d4 = cross(p1, p2, p4)
         
-        # Check 50 points along the line segment
-        for i in range(51):
-            t = i / 50.0
-            curr_x = px1 + (px2 - px1) * t
-            curr_y = py1 + (py2 - py1) * t
-            ix, iy = int(round(curr_x)), int(round(curr_y))
+        if ((d1 > 0 and d2 < 0) or (d1 < 0 and d2 > 0)) and \
+        ((d3 > 0 and d4 < 0) or (d3 < 0 and d4 > 0)):
+            return True
             
-            if 0 <= iy < dist_transform.shape[0] and 0 <= ix < dist_transform.shape[1]:
-                dist = dist_transform[iy, ix]
-                if dist < min_dist:
-                    min_dist = dist
-                    worst_px, worst_py = curr_x, curr_y
-
-        clearance_px = clearance_m * pixels_per_meter
-
-        # If the closest point is safely outside the clearance zone, the line is good!
-        if min_dist >= clearance_px:
-            return [node_b]
-
-        # --- INTERSECTION DETECTED ---
-        # 1. Walk the worst point out to the 0.5m boundary
-        corner_px_x, corner_px_y = self._walk_point_to_boundary(
-            dist_transform, worst_px, worst_py, clearance_px
-        )
+        if d1 == 0 and self._on_segment(p3, p1, p4): return True
+        if d2 == 0 and self._on_segment(p3, p2, p4): return True
+        if d3 == 0 and self._on_segment(p1, p3, p2): return True
+        if d4 == 0 and self._on_segment(p1, p4, p2): return True
         
-        # 2. Convert the new corner pixel back to meters
-        corner_m_x = (corner_px_x / pixels_per_meter) + min_x
-        corner_m_y = max_y - (corner_px_y / pixels_per_meter)
-        
-        # 3. Create the new corner node (FIXED ID GENERATION)
-        corner_node = {
-            # Generate a unique ID using memory addresses to prevent collisions
-            "id": f"corner_{id(node_a)}_{id(node_b)}_{depth}", 
-            "x": float(corner_m_x),
-            "y": float(corner_m_y),
-            "type": "corner",
-            "parent_node": node_a.get('parent_node'),
-            "side": node_a.get('side')
-        }
-        
-        # 4. Recursively resolve the two new halves (A -> Corner, and Corner -> B)
-        left_half = self._resolve_segment_intersection(
-            node_a, corner_node, dist_transform, clearance_m, pixels_per_meter, min_x, max_y, depth + 1
-        )
-        right_half = self._resolve_segment_intersection(
-            corner_node, node_b, dist_transform, clearance_m, pixels_per_meter, min_x, max_y, depth + 1
-        )
-        
-        return left_half + right_half
+        return False
 
+    def fix_overlapping_cross_sections(self, boundary_nodes):
+        print("\n--- Fixing Overlapping Cross Sections ---")
+        
+        max_id_num = 10000
+        for n in boundary_nodes:
+            try:
+                num = int(n['id'].split('_')[1])
+                if num > max_id_num: max_id_num = num
+            except: pass
+        new_id_counter = max_id_num + 1
 
+        changed = True
+        while changed:
+            changed = False
+            
+            parents = {}
+            for node in boundary_nodes:
+                if isinstance(node['parent_node'], list) or node.get('type') == 'boundary_merged':
+                    continue
+                pid = node['parent_node']
+                if pid not in parents: parents[pid] = []
+                parents[pid].append(node)
 
+            segments = []
+            for pid, nodes in parents.items():
+                if len(nodes) == 2:
+                    n1 = nodes[0] if nodes[0]['side'] == 'perp_side_1' else nodes[1]
+                    n2 = nodes[1] if nodes[0]['side'] == 'perp_side_1' else nodes[0]
+                    segments.append({'parent': pid, 'n1': n1, 'n2': n2})
+
+            for i in range(len(segments)):
+                for j in range(i + 1, len(segments)):
+                    s1 = segments[i]
+                    s2 = segments[j]
+                    
+                    p1 = (s1['n1']['x'], s1['n1']['y'])
+                    p2 = (s1['n2']['x'], s1['n2']['y'])
+                    p3 = (s2['n1']['x'], s2['n1']['y'])
+                    p4 = (s2['n2']['x'], s2['n2']['y'])
+                    
+                    if self._segments_intersect(p1, p2, p3, p4):
+                        print(f"Cross-section overlap detected between Parent {s1['parent']} and Parent {s2['parent']}")
+                        
+                        pairs = [
+                            (s1['n1'], s2['n1'], math.hypot(p1[0]-p3[0], p1[1]-p3[1])),
+                            (s1['n1'], s2['n2'], math.hypot(p1[0]-p4[0], p1[1]-p4[1])),
+                            (s1['n2'], s2['n1'], math.hypot(p2[0]-p3[0], p2[1]-p3[1])),
+                            (s1['n2'], s2['n2'], math.hypot(p2[0]-p4[0], p2[1]-p4[1]))
+                        ]
+                        pairs.sort(key=lambda x: x[2])
+                        node_a, node_b = pairs[0][0], pairs[0][1]
+                        
+                        print(f"Merging closest corners: {node_a['id']} and {node_b['id']}")
+                        
+                        merged_node = {
+                            "id": f"node_{new_id_counter}",
+                            "x": (node_a['x'] + node_b['x']) / 2.0,
+                            "y": (node_a['y'] + node_b['y']) / 2.0,
+                            "type": "boundary_merged",
+                            "parent_node": [node_a['parent_node'], node_b['parent_node']], 
+                            "side": "merged_corner"
+                        }
+                        new_id_counter += 1
+                        
+                        boundary_nodes = [n for n in boundary_nodes if n['id'] != node_a['id'] and n['id'] != node_b['id']]
+                        boundary_nodes.append(merged_node)
+                        
+                        changed = True
+                        break 
+                if changed: break
+                    
+        print(f"Cross-section fix complete. Final Boundary Nodes: {len(boundary_nodes)}")
+        return boundary_nodes
 
 
 def main():
