@@ -16,3 +16,4 @@ open3d>=0.17.0
 
 #Computer Vision
 ultralytics==8.4.112
+shapely>=2.0.0
