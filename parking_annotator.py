@@ -1,6 +1,9 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
+from ultralytics import YOLO
+from inference import run_inference
+from inference_config import MODEL_PATH, CONF, TILE_SIZE, PIXEL_THRESHOLD
 import json
 import os
 import cv2
@@ -12,6 +15,12 @@ class ParkingAnnotatorApp:
         self.on_annotations_saved = on_annotations_saved
         if hasattr(self.root, 'title'):
             self.root.title("Parking Space Annotator")
+        
+        # Inference variables
+        self.model = YOLO(MODEL_PATH)
+        self.conf = CONF
+        self.tile_size = TILE_SIZE
+        self.pixel_threshold = PIXEL_THRESHOLD
         
         # State variables
         self.image_path = None
@@ -79,6 +88,9 @@ class ParkingAnnotatorApp:
         self.btn_type_ent = tk.Button(self.type_frame, text="Entrance/Exit", command=lambda: self.set_tool("entrance_exit"))
         self.btn_type_ent.pack(side=tk.LEFT, padx=2)
 
+        btn_save = tk.Button(btn_frame, text="Automatic Annotations", command=self.automatic_annotations, bg="orange", fg="black")
+        btn_save.pack(side=tk.RIGHT, padx=5)
+        
         btn_save = tk.Button(btn_frame, text="Save Annotations", command=self.save_annotations, bg="green", fg="black")
         btn_save.pack(side=tk.RIGHT, padx=5)
 
@@ -354,6 +366,52 @@ class ParkingAnnotatorApp:
                 last_pt = scaled_current[-1]
                 self.canvas.create_line(last_pt[0], last_pt[1], first_pt[0], first_pt[1], fill='red', width=2, dash=(4, 4))
 
+    def automatic_annotations(self):
+        if not self.image_path or not self.original_image:
+            messagebox.showinfo("Info", "Load an image first.")
+            return
+
+        if not messagebox.askyesno("Confirm", "This will run automatic detection and ADD to your current polygons. Continue?"):
+            return
+
+        try:
+            self.status_var.set("Running automatic detection...")
+            self.root.update_idletasks()
+
+            detections, mode = run_inference(
+                self.model,
+                self.image_path,
+                conf=self.conf,
+                tile_size=self.tile_size,
+                pixel_threshold=self.pixel_threshold,
+                base_out_dir="model-output",
+            )
+
+            class_names = self.model.names
+            added = 0
+            for det in detections:
+                cls_name = class_names.get(det["cls"], "regular")
+                points = [(int(round(p[0])), int(round(p[1]))) for p in det["poly"]]
+                poly_type = "entrance_exit" if cls_name == "entrance_exit" else f"parking_space_{cls_name}"
+
+                self.polygons.append({
+                    "id": self.poly_id_counter,
+                    "type": poly_type,
+                    "points": points
+                })
+                self.poly_id_counter += 1
+                added += 1
+
+            self.current_polygon = []
+            self.redraw()
+            self.update_live_occupancy()
+            self.status_var.set(f"Automatic annotation ({mode}) added {added} detections. {len(self.polygons)} total.")
+            messagebox.showinfo("Done", f"Added {added} automatically detected spaces ({mode} mode).")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Automatic annotation failed:\n{e}")
+            self.status_var.set("Automatic annotation failed.")
+
     def save_annotations(self):
         if not self.image_path:
             messagebox.showinfo("Info", "No image loaded.")
@@ -428,7 +486,6 @@ class ParkingAnnotatorApp:
             self.status_var.set("Tool: Entrance/Exit. Left-click to draw. These will be marked as Blue (255,0,0) in occupancy.")
 
 
-
     def update_live_occupancy(self):
         if not self.image_path or not self.original_image:
             return
@@ -464,7 +521,6 @@ class ParkingAnnotatorApp:
             
         except Exception as img_e:
             print(f"Failed to create live parking occupancy image: {img_e}")
-
 
 
 if __name__ == "__main__":

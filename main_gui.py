@@ -16,7 +16,7 @@ class MainApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Autonomous Carpark Patrol - Unified GUI")
-        self.root.geometry("1200x800")
+        self.root.geometry("1500x800")
         
         # Setup Notebook (Tabs)
         self.notebook = ttk.Notebook(self.root)
