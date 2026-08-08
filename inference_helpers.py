@@ -1,6 +1,9 @@
 import numpy as np
 from PIL import Image, ImageDraw
-from shapely.geometry import Polygon
+try:
+    from shapely.geometry import Polygon
+except ImportError:
+    Polygon = None
 
 def generate_tiles(width, height, tile_size, offset_x=0, offset_y=0):
     """Generate tile coordinates covering the image, starting from an offset."""

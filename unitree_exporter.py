@@ -165,7 +165,208 @@ class UnitreeGo2Exporter:
         # 3. Save executable Python runner script
         runner_path = self._generate_runner_script(json_filename)
 
+        # 4. Save visual final route output image(s)
+        self.export_route_image(nodes, edges, bounds, resolution, filename_prefix)
+
         return json_path, yaml_path, runner_path
+
+    def export_route_image(self, nodes, edges, bounds, resolution, filename_prefix="road_graph"):
+        """
+        Generates and saves visual output image(s) of the final route overlaid on the orthomosaic/map image.
+        Saves:
+          - final_route.png
+          - {filename_prefix}_final_route.png
+          - final_graph.png
+        into self.output_dir.
+        """
+        import cv2
+        import numpy as np
+
+        if not nodes:
+            return None
+
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        # 1. Locate background map image
+        parent_dir = os.path.dirname(self.output_dir)
+        candidate_bg_paths = [
+            os.path.join(parent_dir, "orthomosaic.png"),
+            os.path.join(parent_dir, "merged_occupancy.png"),
+            os.path.join(parent_dir, "obstacle_occupancy.png"),
+            os.path.join(self.output_dir, "orthomosaic.png"),
+            os.path.join(self.output_dir, "merged_occupancy.png"),
+            os.path.join(self.output_dir, "obstacle_occupancy.png"),
+        ]
+
+        bg_img = None
+        for path in candidate_bg_paths:
+            if os.path.exists(path):
+                loaded = cv2.imread(path)
+                if loaded is not None:
+                    bg_img = loaded
+                    break
+
+        min_x = bounds.get('min_x', 0) if isinstance(bounds, dict) else 0
+        max_y = bounds.get('max_y', 100) if isinstance(bounds, dict) else 100
+        min_y = bounds.get('min_y', 0) if isinstance(bounds, dict) else 0
+        max_x = bounds.get('max_x', 100) if isinstance(bounds, dict) else 100
+        res = resolution if resolution and resolution > 0 else 70
+
+        # Build node pixel dictionary: id -> {'px', 'py', 'type', 'id'}
+        pixel_nodes = {}
+        for n in nodes:
+            nx, ny = n['x'], n['y']
+            # Check if coordinates are in meters (within bounding box range)
+            if min_x <= nx <= max_x and min_y <= ny <= max_y and (max_x - min_x) < 500:
+                px = int(round((nx - min_x) * res))
+                py = int(round((max_y - ny) * res))
+            else:
+                px = int(round(nx))
+                py = int(round(ny))
+            pixel_nodes[n['id']] = {
+                'px': px,
+                'py': py,
+                'type': n.get('type', 'waypoint'),
+                'id': n['id']
+            }
+
+        # If no background image found, create canvas based on node pixel coordinates
+        if bg_img is None:
+            all_px = [p['px'] for p in pixel_nodes.values()]
+            all_py = [p['py'] for p in pixel_nodes.values()]
+            max_w = max(all_px + [1000]) + 100
+            max_h = max(all_py + [1000]) + 100
+            bg_img = np.full((max_h, max_w, 3), 240, dtype=np.uint8)
+        elif len(bg_img.shape) == 2:
+            bg_img = cv2.cvtColor(bg_img, cv2.COLOR_GRAY2BGR)
+
+        vis_img = bg_img.copy()
+        h, w = vis_img.shape[:2]
+
+        # 2. Draw Parking Spaces Overlay if present in parent_dir
+        park_json_path = os.path.join(parent_dir, "orthomosaic_parking_spaces.json")
+        if not os.path.exists(park_json_path):
+            if os.path.exists(parent_dir):
+                for f in os.listdir(parent_dir):
+                    if f.endswith("_parking_spaces.json"):
+                        park_json_path = os.path.join(parent_dir, f)
+                        break
+
+        if os.path.exists(park_json_path):
+            try:
+                with open(park_json_path, 'r') as pf:
+                    pdata = json.load(pf)
+                    is_meters = pdata.get("coordinate_system") == "meters"
+                    for poly in pdata.get("parking_spaces", []):
+                        poly_pts = []
+                        for pt in poly["points"]:
+                            if is_meters:
+                                x_p = int(round((pt[0] - min_x) * res))
+                                y_p = int(round((max_y - pt[1]) * res))
+                            else:
+                                x_p, y_p = int(pt[0]), int(pt[1])
+                            poly_pts.append([x_p, y_p])
+                        if len(poly_pts) >= 3:
+                            pts_arr = np.array(poly_pts, np.int32).reshape((-1, 1, 2))
+                            color = (255, 150, 0) if poly.get('type') == 'entrance_exit' else (0, 200, 100)
+                            cv2.polylines(vis_img, [pts_arr], True, color, 1, cv2.LINE_AA)
+            except Exception as pe:
+                print(f"Note: could not overlay parking spaces: {pe}")
+
+        # 3. Compute patrol sequence for ordered line drawing
+        patrol_path = self._compute_patrol_sequence(
+            {n_id: {'x': n['px'], 'y': n['py'], 'type': n['type']} for n_id, n in pixel_nodes.items()},
+            edges
+        )
+
+        lines_to_draw = []
+        if patrol_path and len(patrol_path) > 1:
+            for i in range(len(patrol_path) - 1):
+                u_id, v_id = patrol_path[i], patrol_path[i + 1]
+                if u_id in pixel_nodes and v_id in pixel_nodes:
+                    lines_to_draw.append((pixel_nodes[u_id], pixel_nodes[v_id], i))
+        else:
+            for i, e in enumerate(edges):
+                u_id, v_id = e.get('from_id'), e.get('to_id')
+                if u_id in pixel_nodes and v_id in pixel_nodes:
+                    lines_to_draw.append((pixel_nodes[u_id], pixel_nodes[v_id], i))
+
+        total_distance_px = 0.0
+        for p1, p2, seq_idx in lines_to_draw:
+            pt1 = (p1['px'], p1['py'])
+            pt2 = (p2['px'], p2['py'])
+            dist_px = math.hypot(pt2[0] - pt1[0], pt2[1] - pt1[1])
+            total_distance_px += dist_px
+
+            # Thick cyan line for patrol path
+            cv2.line(vis_img, pt1, pt2, (255, 220, 0), 3, cv2.LINE_AA)
+
+            # Draw direction arrow along segment
+            if dist_px > 15:
+                mid_x = int(0.6 * pt2[0] + 0.4 * pt1[0])
+                mid_y = int(0.6 * pt2[1] + 0.4 * pt1[1])
+                angle = math.atan2(pt2[1] - pt1[1], pt2[0] - pt1[0])
+                arrow_len = 12
+                p_arrow1 = (
+                    int(mid_x - arrow_len * math.cos(angle - math.pi / 6)),
+                    int(mid_y - arrow_len * math.sin(angle - math.pi / 6))
+                )
+                p_arrow2 = (
+                    int(mid_x - arrow_len * math.cos(angle + math.pi / 6)),
+                    int(mid_y - arrow_len * math.sin(angle + math.pi / 6))
+                )
+                cv2.line(vis_img, (mid_x, mid_y), p_arrow1, (0, 140, 255), 2, cv2.LINE_AA)
+                cv2.line(vis_img, (mid_x, mid_y), p_arrow2, (0, 140, 255), 2, cv2.LINE_AA)
+
+        total_distance_m = total_distance_px / res if res > 0 else 0.0
+
+        # 4. Draw Waypoint Nodes & Labels
+        seq_map = {n_id: i for i, n_id in enumerate(patrol_path)} if patrol_path else {}
+        for n_id, n in pixel_nodes.items():
+            cx, cy = n['px'], n['py']
+            ntype = n['type']
+            seq = seq_map.get(n_id, None)
+            label = f"WP {seq}" if seq is not None else str(n_id)
+
+            if ntype == 'entrance_exit':
+                cv2.circle(vis_img, (cx, cy), 8, (0, 230, 0), -1, cv2.LINE_AA)
+                cv2.circle(vis_img, (cx, cy), 8, (255, 255, 255), 2, cv2.LINE_AA)
+            else:
+                cv2.circle(vis_img, (cx, cy), 6, (0, 215, 255), -1, cv2.LINE_AA)
+                cv2.circle(vis_img, (cx, cy), 6, (0, 0, 0), 1, cv2.LINE_AA)
+
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            scale = 0.45
+            thick = 1
+            offset_x, offset_y = cx + 8, cy - 8
+
+            cv2.putText(vis_img, label, (offset_x + 1, offset_y + 1), font, scale, (0, 0, 0), thick + 1, cv2.LINE_AA)
+            cv2.putText(vis_img, label, (offset_x, offset_y), font, scale, (255, 255, 255), thick, cv2.LINE_AA)
+
+        # 5. Draw Header Banner
+        banner_h = 50
+        overlay = vis_img.copy()
+        cv2.rectangle(overlay, (0, 0), (w, banner_h), (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.75, vis_img, 0.25, 0, vis_img)
+
+        folder_label = os.path.basename(self.output_dir)
+        title_text = f"PATROL ROUTE MAP ({folder_label.upper()})"
+        subtitle_text = f"Waypoints: {len(pixel_nodes)}  |  Est. Distance: {total_distance_m:.1f}m  |  Resolution: {res} px/m"
+
+        cv2.putText(vis_img, title_text, (15, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(vis_img, subtitle_text, (15, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1, cv2.LINE_AA)
+
+        # Save output images
+        route_img_path = os.path.join(self.output_dir, "final_route.png")
+        prefix_route_img_path = os.path.join(self.output_dir, f"{filename_prefix}_final_route.png")
+        graph_img_path = os.path.join(self.output_dir, "final_graph.png")
+
+        cv2.imwrite(route_img_path, vis_img)
+        cv2.imwrite(prefix_route_img_path, vis_img)
+        cv2.imwrite(graph_img_path, vis_img)
+
+        print(f"Final route output image saved to {route_img_path}")
+        return route_img_path
 
     def _write_fallback_yaml(self, path, data):
         """Simple YAML formatter fallback when PyYAML is not installed."""
@@ -362,6 +563,17 @@ class Go2PatrolController:
         else:
             self.sport_client.Move(vx=vx, vy=vy, vyaw=vyaw)
 
+    def _stop(self):
+        """Zero velocity, routed through whichever client currently has
+        authority over locomotion (mirrors _move()). sport_client.StopMove()
+        alone does nothing while ObstaclesAvoidClient is the active command
+        source, which is why the robot would previously sail through
+        waypoints instead of stopping."""
+        if self.obstacle_avoidance_enabled:
+            self.obstacle_client.Move(0.0, 0.0, 0.0)
+        else:
+            self.sport_client.StopMove()
+
     def stand_up(self):
         self.sport_client.StopMove()
         time.sleep(0.2)
@@ -372,9 +584,9 @@ class Go2PatrolController:
         self.enable_obstacle_avoidance()
 
     def stand_down(self):
-        self.sport_client.StopMove()
+        self._stop()
         self.disable_obstacle_avoidance()
-        self.sport_client.Euler(0.0, 0.0, 0.0)
+        #self.sport_client.Euler(0.0, 0.0, 0.0)
         time.sleep(0.2)
         self.sport_client.StandDown()
         self.is_standing = False
@@ -392,7 +604,7 @@ class Go2PatrolController:
         while True:
             if _check_for_space_kill():
                 print("\\nKill switch pressed. Stopping.")
-                self.sport_client.StopMove()
+                self._stop()
                 self.stand_down()
                 return False
 
@@ -417,9 +629,10 @@ class Go2PatrolController:
                 vx = max_speed * min(1.0, dist / 0.5)
 
             self._move(vx, 0.0, vyaw)
+            print(f"move command sent {vx}")
             time.sleep(period)
 
-        self.sport_client.StopMove()
+        self._stop()
 
         # Rotate to the requested final yaw, if the waypoint specifies one.
         if target_yaw_deg is not None:
@@ -427,7 +640,7 @@ class Go2PatrolController:
             while True:
                 if _check_for_space_kill():
                     print("\\nKill switch pressed. Stopping.")
-                    self.sport_client.StopMove()
+                    self._stop()
                     self.stand_down()
                     return False
                 err = angle_diff_rad(target_yaw_rad, self.pose_yaw)
@@ -436,38 +649,48 @@ class Go2PatrolController:
                 vyaw = max(-MAX_YAW_RATE, min(MAX_YAW_RATE, HEADING_KP * err))
                 self._move(0.0, 0.0, vyaw)
                 time.sleep(period)
-            self.sport_client.StopMove()
+            self._stop()
 
         return True
 
     def run_patrol(self, waypoints_data):
-        waypoints = waypoints_data.get("waypoints", [])
-        print(f"Executing live patrol sequence for {len(waypoints)} waypoints...")
+        try:
+            waypoints = waypoints_data.get("waypoints", [])
+            print(f"Executing live patrol sequence for {len(waypoints)} waypoints...")
 
-        if not self.is_standing:
-            print("Standing up...")
-            self.stand_up()
+            if not self.is_standing:
+                print("Standing up...")
+                self.stand_up()
 
-        for wp in waypoints:
-            print(f"Navigating to Node {wp['id']} "
-                  f"({wp['x']:.2f}, {wp['y']:.2f}, yaw={wp.get('yaw_deg', 0):.1f}°)...")
-            ok = self.navigate_to_waypoint(wp)
-            if not ok:
-                return  # kill switch was hit
+            for wp in waypoints:
+                print(f"Navigating to Node {wp['id']} "
+                    f"({wp['x']:.2f}, {wp['y']:.2f}, yaw={wp.get('yaw_deg', 0):.1f}°)...")
+                ok = self.navigate_to_waypoint(wp)
+                if not ok:
+                    return  # kill switch was hit
 
-            wait_time = wp.get("wait_time_sec", 0.5)
-            if wait_time > 0:
-                t0 = time.time()
-                while time.time() - t0 < wait_time:
-                    if _check_for_space_kill():
-                        print("\\nKill switch pressed. Stopping.")
-                        self.sport_client.StopMove()
-                        self.stand_down()
-                        return
-                    time.sleep(1.0 / CONTROL_HZ)
+                wait_time = wp.get("wait_time_sec", 0.5)
+                if wait_time > 0:
+                    t0 = time.time()
+                    while time.time() - t0 < wait_time:
+                        if _check_for_space_kill():
+                            print("\\nKill switch pressed. Stopping.")
+                            self._stop()
+                            self.stand_down()
+                            return
+                        time.sleep(1.0 / CONTROL_HZ)
+            print("Patrol completed. Returning to idle pose...")
+            self.stand_down()
+        finally:
+            try:
+                print("Shutting down safely...")
+                if self.is_standing:
+                    self.stand_down()
+            except Exception as e:
+                # If the robot disconnects during shutdown, we just print it and exit cleanly
+                print(f"\\nNote: Shutdown command interrupted ({e}). Robot may need manual sit")
 
-        print("Patrol completed. Returning to idle pose...")
-        self.stand_down()
+        
 
 
 def run_patrol_simulation(waypoints_data, speed_factor=1.0):
@@ -530,11 +753,11 @@ def main():
     else:
         controller = Go2PatrolController(network_interface=args.net)
         controller.run_patrol(data)
+    
 
 
 if __name__ == "__main__":
-    main()
-'''
+    main()'''
         runner_code = runner_code.replace("__DEFAULT_WAYPOINTS_JSON__", json_filename)
 
         runner_path = os.path.join(self.output_dir, "run_go2_patrol.py")

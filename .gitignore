@@ -421,6 +421,13 @@ FodyWeavers.xsd
 /PLYInput
 /output
 
+# Program output files
 /output/Smart_Parking_Park
 /output/PolyCamPark
+
+# Model output files 
+
+/model-output 
+/model-output/normal
+/model-output/tiled
 
