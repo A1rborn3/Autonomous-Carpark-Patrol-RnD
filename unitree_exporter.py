@@ -144,37 +144,20 @@ class UnitreeGo2Exporter:
             'edges': edges
         }
 
-        # 1. Save JSON output
-        json_filename = f"{filename_prefix}_go2_waypoints.json"
-        json_path = os.path.join(self.output_dir, json_filename)
-        with open(json_path, 'w') as f:
-            json.dump(data, f, indent=4)
-        print(f"Unitree Go2 waypoints JSON exported to {json_path}")
+        graph_json_filename = f"{filename_prefix}_graph.json"
 
-        # 2. Save YAML output
-        yaml_path = os.path.join(self.output_dir, f"{filename_prefix}_go2_waypoints.yaml")
-        if YAML_AVAILABLE:
-            with open(yaml_path, 'w') as f:
-                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-            print(f"Unitree Go2 waypoints YAML exported to {yaml_path}")
-        else:
-            # Fallback simple YAML writer if PyYAML is not installed
-            self._write_fallback_yaml(yaml_path, data)
-            print(f"Unitree Go2 waypoints YAML exported to {yaml_path}")
+        # 1. Save executable Python runner script pointing to graph JSON
+        runner_path = self._generate_runner_script(graph_json_filename)
 
-        # 3. Save executable Python runner script
-        runner_path = self._generate_runner_script(json_filename)
-
-        # 4. Save visual final route output image(s)
+        # 2. Save visual final route output image(s)
         self.export_route_image(nodes, edges, bounds, resolution, filename_prefix)
 
-        return json_path, yaml_path, runner_path
+        return runner_path
 
     def export_route_image(self, nodes, edges, bounds, resolution, filename_prefix="road_graph"):
         """
         Generates and saves visual output image(s) of the final route overlaid on the orthomosaic/map image.
         Saves:
-          - final_route.png
           - {filename_prefix}_final_route.png
           - final_graph.png
         into self.output_dir.
@@ -357,16 +340,14 @@ class UnitreeGo2Exporter:
         cv2.putText(vis_img, subtitle_text, (15, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1, cv2.LINE_AA)
 
         # Save output images
-        route_img_path = os.path.join(self.output_dir, "final_route.png")
         prefix_route_img_path = os.path.join(self.output_dir, f"{filename_prefix}_final_route.png")
         graph_img_path = os.path.join(self.output_dir, "final_graph.png")
 
-        cv2.imwrite(route_img_path, vis_img)
         cv2.imwrite(prefix_route_img_path, vis_img)
         cv2.imwrite(graph_img_path, vis_img)
 
-        print(f"Final route output image saved to {route_img_path}")
-        return route_img_path
+        print(f"Final route output image saved to {prefix_route_img_path}")
+        return prefix_route_img_path
 
     def _write_fallback_yaml(self, path, data):
         """Simple YAML formatter fallback when PyYAML is not installed."""
@@ -813,7 +794,7 @@ def run_patrol_simulation(waypoints_data, speed_factor=1.0):
 def main():
     parser = argparse.ArgumentParser(description="Unitree Go2 Waypoint Patrol Controller")
     #default_json = os.path.join(os.path.dirname(__file__), "orthomosaic_go2_waypoints.json")
-    default_json = os.path.join(os.path.dirname(__file__), "orthomosaic_graph.json")
+    default_json = os.path.join(os.path.dirname(__file__), "__DEFAULT_WAYPOINTS_JSON__")
     parser.add_argument("--waypoints", type=str, default=default_json, help="Path to waypoints JSON file")
     parser.add_argument("--net", type=str, default="eth0", help="Network interface for Unitree SDK 2")
     parser.add_argument("--dry-run", action="store_true", help="Run in simulation mode (offline mock execution)")

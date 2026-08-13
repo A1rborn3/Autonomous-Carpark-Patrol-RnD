@@ -112,7 +112,7 @@ class MainApp:
             messagebox.showinfo(
                 "Manual Route Exported",
                 f"Exported manual route with {len(nodes)} waypoints!\n\n"
-                f"Saved to: Manual Output/\n- {basename}_graph.json\n- {basename}_go2_waypoints.json\n- run_go2_patrol.py"
+                f"Saved to: Manual Output/\n- {basename}_graph.json\n- run_go2_patrol.py"
             )
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export manual route:\n{e}")
