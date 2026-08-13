@@ -440,9 +440,15 @@ import time
 import json
 import math
 import argparse
-import select
-import termios
-import tty
+
+try:
+    import select
+    import termios
+    import tty
+except ImportError:
+    select = None
+    termios = None
+    tty = None
 
 SDK_AVAILABLE = False
 try:
@@ -467,7 +473,7 @@ YAW_TOLERANCE_DEG = 8.0          # how close counts as "facing" the target yaw
 MAX_LINEAR_SPEED = 1.0           # m/s safety cap, overrides waypoint speed if higher
 MAX_YAW_RATE = 1.0               # rad/s cap for turning
 CONTROL_HZ = 20.0                # control loop rate
-HEADING_KP = 2.0                 # proportional gain: rad/s per rad of heading error
+HEADING_KP = 1.5                 # proportional gain: rad/s per rad of heading error
 TURN_IN_PLACE_THRESHOLD_DEG = 30 # if heading error exceeds this, stop and turn first
 
 
@@ -475,11 +481,74 @@ def load_waypoints(json_path):
     if not os.path.exists(json_path):
         raise FileNotFoundError(f"Waypoints file not found: {json_path}")
     with open(json_path, "r") as f:
-        return json.load(f)
+        data = json.load(f)
+    return normalize_waypoints(data)
+
+
+def normalize_waypoints(data):
+    """Accept either the legacy waypoint export or the orthomosaic graph JSON."""
+    if not isinstance(data, dict):
+        raise ValueError("Waypoint data must be a JSON object")
+
+    if isinstance(data.get("waypoints"), list) and data["waypoints"]:
+        return data
+
+    nodes = data.get("nodes")
+    if not isinstance(nodes, list) or not nodes:
+        raise ValueError("No valid waypoints/nodes found in the JSON file")
+
+    normalized = {
+        "metadata": data.get("metadata", {}),
+        "edges": data.get("edges", []),
+        "waypoints": [],
+    }
+
+    for idx, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+
+        x = float(node.get("x", 0.0))
+        y = float(node.get("y", 0.0))
+        yaw_deg = node.get("yaw_deg")
+        if yaw_deg is None:
+            yaw_deg = node.get("yaw")
+
+        yaw_rad = node.get("yaw_rad")
+        if yaw_rad is None:
+            try:
+                if yaw_deg is None:
+                    yaw_rad = None
+                else:
+                    yaw_rad = math.radians(float(yaw_deg))
+            except (TypeError, ValueError):
+                yaw_rad = None
+
+        wp = {
+            "seq": idx,
+            "id": node.get("id", f"node_{idx}"),
+            "type": node.get("type", "waypoint"),
+            "x": x,
+            "y": y,
+            "z": node.get("z", 0.0),
+            "yaw_deg": (float(yaw_deg) if yaw_deg is not None else None),
+            "yaw_rad": (float(yaw_rad) if yaw_rad is not None else None),
+            "target_speed_m_s": node.get("target_speed_m_s", 0.8),
+            "tolerance_m": node.get("tolerance_m", 0.3),
+            "wait_time_sec": node.get("wait_time_sec", 0.5),
+        }
+        normalized["waypoints"].append(wp)
+
+    if not normalized["waypoints"]:
+        raise ValueError("Waypoint graph contains no usable node entries")
+
+    return normalized
 
 
 def _check_for_space_kill():
     """Non-blocking single-key check. Returns True if space was pressed."""
+    if termios is None or tty is None or select is None:
+        return False
+
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
@@ -585,7 +654,7 @@ class Go2PatrolController:
 
     def stand_down(self):
         self._stop()
-        self.disable_obstacle_avoidance()
+        #self.disable_obstacle_avoidance()
         #self.sport_client.Euler(0.0, 0.0, 0.0)
         time.sleep(0.2)
         self.sport_client.StandDown()
@@ -603,7 +672,7 @@ class Go2PatrolController:
 
         while True:
             if _check_for_space_kill():
-                print("\\nKill switch pressed. Stopping.")
+                print("\nKill switch pressed. Stopping.")
                 self._stop()
                 self.stand_down()
                 return False
@@ -639,7 +708,7 @@ class Go2PatrolController:
             target_yaw_rad = math.radians(target_yaw_deg)
             while True:
                 if _check_for_space_kill():
-                    print("\\nKill switch pressed. Stopping.")
+                    print("\nKill switch pressed. Stopping.")
                     self._stop()
                     self.stand_down()
                     return False
@@ -663,8 +732,12 @@ class Go2PatrolController:
                 self.stand_up()
 
             for wp in waypoints:
+                # Avoid formatting None (which raises TypeError); display 0.0 when
+                # waypoint yaw is unspecified.
+                _yaw_val = wp.get('yaw_deg')
+                _yaw_disp = 0.0 if _yaw_val is None else _yaw_val
                 print(f"Navigating to Node {wp['id']} "
-                    f"({wp['x']:.2f}, {wp['y']:.2f}, yaw={wp.get('yaw_deg', 0):.1f}°)...")
+                    f"({wp['x']:.2f}, {wp['y']:.2f}, yaw={_yaw_disp:.1f}°)...")
                 ok = self.navigate_to_waypoint(wp)
                 if not ok:
                     return  # kill switch was hit
@@ -674,7 +747,7 @@ class Go2PatrolController:
                     t0 = time.time()
                     while time.time() - t0 < wait_time:
                         if _check_for_space_kill():
-                            print("\\nKill switch pressed. Stopping.")
+                            print("\nKill switch pressed. Stopping.")
                             self._stop()
                             self.stand_down()
                             return
@@ -688,26 +761,28 @@ class Go2PatrolController:
                     self.stand_down()
             except Exception as e:
                 # If the robot disconnects during shutdown, we just print it and exit cleanly
-                print(f"\\nNote: Shutdown command interrupted ({e}). Robot may need manual sit")
+                print(f"\nNote: Shutdown command interrupted ({e}). Robot may need manual sit")
 
         
 
 
 def run_patrol_simulation(waypoints_data, speed_factor=1.0):
-    print("\\n=======================================================")
+    print("\n=======================================================")
     print("      UNITREE GO2 PATROL SIMULATION / DRY-RUN MODE     ")
     print("=======================================================")
     waypoints = waypoints_data.get("waypoints", [])
     meta = waypoints_data.get("metadata", {})
     print(f"Loaded {len(waypoints)} waypoints across {meta.get('total_patrol_distance_m', 0)} meters.")
-    print("Starting simulated route execution...\\n")
+    print("Starting simulated route execution...\n")
 
     curr_x, curr_y = 0.0, 0.0
 
     for wp in waypoints:
         target_x = wp["x"]
         target_y = wp["y"]
-        target_yaw = wp["yaw_deg"]
+        target_yaw = wp.get("yaw_deg")
+        if target_yaw is None:
+            target_yaw = 0.0
         dist = math.hypot(target_x - curr_x, target_y - curr_y)
         speed = wp.get("target_speed_m_s", 0.8) * speed_factor
         travel_time = dist / speed if speed > 0 else 0
@@ -723,7 +798,7 @@ def run_patrol_simulation(waypoints_data, speed_factor=1.0):
             px = curr_x + ratio * (target_x - curr_x)
             py = curr_y + ratio * (target_y - curr_y)
             bar = "=" * (s * 4) + ">" + "." * ((steps - s) * 4)
-            print(f"   [{bar}] Robot pos: ({px:6.2f}, {py:6.2f})", end="\\r")
+            print(f"   [{bar}] Robot pos: ({px:6.2f}, {py:6.2f})", end="\r")
             time.sleep(0.1 / speed_factor)
         print()
 
@@ -732,12 +807,13 @@ def run_patrol_simulation(waypoints_data, speed_factor=1.0):
         time.sleep(min(wait_time, 0.5) / speed_factor)
         print("-" * 55)
 
-    print("\\n[SUCCESS] Unitree Go2 patrol mission simulation finished successfully!")
+    print("\n[SUCCESS] Unitree Go2 patrol mission simulation finished successfully!")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Unitree Go2 Waypoint Patrol Controller")
-    default_json = os.path.join(os.path.dirname(__file__), "__DEFAULT_WAYPOINTS_JSON__")
+    #default_json = os.path.join(os.path.dirname(__file__), "orthomosaic_go2_waypoints.json")
+    default_json = os.path.join(os.path.dirname(__file__), "orthomosaic_graph.json")
     parser.add_argument("--waypoints", type=str, default=default_json, help="Path to waypoints JSON file")
     parser.add_argument("--net", type=str, default="eth0", help="Network interface for Unitree SDK 2")
     parser.add_argument("--dry-run", action="store_true", help="Run in simulation mode (offline mock execution)")

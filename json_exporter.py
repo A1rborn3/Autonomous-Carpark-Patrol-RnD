@@ -55,9 +55,9 @@ class JSONExporter:
             json.dump(data, f, indent=4)
         return output_path
 
-    def export_unitree_waypoints(self, nodes, edges, bounds, resolution, filename_prefix="road_graph", base_lat=37.7749, base_lon=-122.4194):
+    def export_unitree_waypoints(self, nodes, edges, bounds, resolution, filename_prefix="road_graph"):
         """Helper method to export Unitree Go2 robot dog waypoints directly from JSONExporter."""
         from unitree_exporter import UnitreeGo2Exporter
-        exporter = UnitreeGo2Exporter(self.output_dir, base_lat=base_lat, base_lon=base_lon)
+        exporter = UnitreeGo2Exporter(self.output_dir)
         return exporter.export_unitree_waypoints(nodes, edges, bounds, resolution, filename_prefix=filename_prefix)
 

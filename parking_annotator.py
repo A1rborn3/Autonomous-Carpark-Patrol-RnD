@@ -46,53 +46,73 @@ class ParkingAnnotatorApp:
         self.setup_ui()
         
     def setup_ui(self):
-        # Top Frame for Buttons
-        btn_frame = tk.Frame(self.root, padx=5, pady=5)
-        btn_frame.pack(fill=tk.X, side=tk.TOP)
-        
-        btn_load = tk.Button(btn_frame, text="Load Map Image", command=self.load_image)
-        btn_load.pack(side=tk.LEFT, padx=5)
-        
-        btn_undo = tk.Button(btn_frame, text="Undo Last Point", command=self.undo_point)
-        btn_undo.pack(side=tk.LEFT, padx=5)
-        
-        btn_clear_current = tk.Button(btn_frame, text="Clear Current Polygon", command=self.clear_current)
-        btn_clear_current.pack(side=tk.LEFT, padx=5)
+        # Left Panel for Controls / Buttons
+        sidebar = tk.Frame(self.root, width=240, padx=10, pady=10, relief=tk.RAISED, borderwidth=1)
+        sidebar.pack(side=tk.LEFT, fill=tk.Y)
 
-        btn_finish_poly = tk.Button(btn_frame, text="Finish Polygon (or Right-Click)", command=self.finish_polygon)
-        btn_finish_poly.pack(side=tk.LEFT, padx=5)
-        
-        btn_clear_all = tk.Button(btn_frame, text="Clear ALL Polygons", command=self.clear_all)
-        btn_clear_all.pack(side=tk.LEFT, padx=5)
-        
-        btn_zoom_out = tk.Button(btn_frame, text="Zoom Out", command=self.zoom_out)
-        btn_zoom_out.pack(side=tk.LEFT, padx=5)
-        
-        # Type Toggle
-        self.type_frame = tk.Frame(btn_frame, padx=10)
-        self.type_frame.pack(side=tk.LEFT)
-        tk.Label(self.type_frame, text="Current Tool:").pack(side=tk.LEFT)
+        tk.Label(sidebar, text="Annotator Controls", font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 10))
+
+        # 1. File Actions
+        file_frame = tk.LabelFrame(sidebar, text="Map File", padx=5, pady=5)
+        file_frame.pack(fill=tk.X, pady=(0, 10))
+
+        btn_load = tk.Button(file_frame, text="Load Map Image", command=self.load_image)
+        btn_load.pack(fill=tk.X, pady=2)
+
+        # 2. Tool Selection
+        self.type_frame = tk.LabelFrame(sidebar, text="Current Tool", padx=5, pady=5)
+        self.type_frame.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(self.type_frame, text="Parking Spot Type:").pack(anchor=tk.W, pady=(0, 2))
 
         self.style_var = tk.StringVar(value="Regular")
-        
         self.opt_type_park = tk.OptionMenu(
-            self.type_frame, 
-            self.style_var, 
+            self.type_frame,
+            self.style_var,
             *self.carpark_types.keys(),
             command=lambda _: self.set_tool("parking_space")
         )
-
-        self.opt_type_park.config(bg="lightblue") 
-        self.opt_type_park.pack(side=tk.LEFT, padx=2)
+        self.opt_type_park.config(bg="lightblue")
+        self.opt_type_park.pack(fill=tk.X, pady=(0, 5))
 
         self.btn_type_ent = tk.Button(self.type_frame, text="Entrance/Exit", command=lambda: self.set_tool("entrance_exit"))
-        self.btn_type_ent.pack(side=tk.LEFT, padx=2)
+        self.btn_type_ent.pack(fill=tk.X, pady=2)
 
-        btn_save = tk.Button(btn_frame, text="Automatic Annotations", command=self.automatic_annotations, bg="orange", fg="black")
-        btn_save.pack(side=tk.RIGHT, padx=5)
-        
-        btn_save = tk.Button(btn_frame, text="Save Annotations", command=self.save_annotations, bg="green", fg="black")
-        btn_save.pack(side=tk.RIGHT, padx=5)
+        # 3. Polygon Editing
+        edit_frame = tk.LabelFrame(sidebar, text="Polygon Editing", padx=5, pady=5)
+        edit_frame.pack(fill=tk.X, pady=(0, 10))
+
+        btn_undo = tk.Button(edit_frame, text="Undo Last Point", command=self.undo_point)
+        btn_undo.pack(fill=tk.X, pady=2)
+
+        btn_finish_poly = tk.Button(edit_frame, text="Finish Polygon", command=self.finish_polygon)
+        btn_finish_poly.pack(fill=tk.X, pady=2)
+
+        btn_clear_current = tk.Button(edit_frame, text="Clear Current Polygon", command=self.clear_current)
+        btn_clear_current.pack(fill=tk.X, pady=2)
+
+        btn_clear_all = tk.Button(edit_frame, text="Clear ALL Polygons", command=self.clear_all)
+        btn_clear_all.pack(fill=tk.X, pady=2)
+
+        # 4. View Controls
+        view_frame = tk.LabelFrame(sidebar, text="View Controls", padx=5, pady=5)
+        view_frame.pack(fill=tk.X, pady=(0, 10))
+
+        btn_zoom_in = tk.Button(view_frame, text="Zoom In", command=self.zoom_in)
+        btn_zoom_in.pack(fill=tk.X, pady=2)
+
+        btn_zoom_out = tk.Button(view_frame, text="Zoom Out", command=self.zoom_out)
+        btn_zoom_out.pack(fill=tk.X, pady=2)
+
+        # 5. Annotation Actions
+        actions_frame = tk.LabelFrame(sidebar, text="Actions & Save", padx=5, pady=5)
+        actions_frame.pack(fill=tk.X, pady=(0, 10))
+
+        btn_auto = tk.Button(actions_frame, text="Automatic Annotations", command=self.automatic_annotations, bg="orange", fg="black")
+        btn_auto.pack(fill=tk.X, pady=2)
+
+        btn_save = tk.Button(actions_frame, text="Save Annotations", command=self.save_annotations, bg="green", fg="black")
+        btn_save.pack(fill=tk.X, pady=2)
 
         
         # Canvas Frame with Scrollbars
