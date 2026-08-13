@@ -30,6 +30,7 @@ class ParkingAnnotatorApp:
         
         self.polygons = [] # List of completed polygons. Each is a dict: {'id': int, 'points': [(x,y), ...]}
         self.current_polygon = [] # List of (x,y) points for the polygon currently being drawn
+        self.selected_polygon_id = None
         self.poly_id_counter = 1
         self.zoom_factor = 1.0
         self.img_offset_x = 0
@@ -46,9 +47,50 @@ class ParkingAnnotatorApp:
         self.setup_ui()
         
     def setup_ui(self):
-        # Left Panel for Controls / Buttons
-        sidebar = tk.Frame(self.root, width=240, padx=10, pady=10, relief=tk.RAISED, borderwidth=1)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        # Left Panel for Controls / Buttons (scrollable so all controls stay
+        # reachable even when the window is short or the control list grows)
+        sidebar_outer = tk.Frame(self.root, width=260, relief=tk.RAISED, borderwidth=1)
+        sidebar_outer.pack(side=tk.LEFT, fill=tk.Y)
+        sidebar_outer.pack_propagate(False)
+
+        sidebar_canvas = tk.Canvas(sidebar_outer, width=260, highlightthickness=0)
+        sidebar_scrollbar = tk.Scrollbar(sidebar_outer, orient=tk.VERTICAL, command=sidebar_canvas.yview)
+        sidebar_canvas.configure(yscrollcommand=sidebar_scrollbar.set)
+
+        sidebar_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        sidebar_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        sidebar = tk.Frame(sidebar_canvas, padx=10, pady=10)
+        sidebar_window = sidebar_canvas.create_window((0, 0), window=sidebar, anchor="nw")
+
+        def _on_sidebar_configure(event):
+            sidebar_canvas.configure(scrollregion=sidebar_canvas.bbox("all"))
+        sidebar.bind("<Configure>", _on_sidebar_configure)
+
+        def _on_sidebar_canvas_configure(event):
+            sidebar_canvas.itemconfig(sidebar_window, width=event.width)
+        sidebar_canvas.bind("<Configure>", _on_sidebar_canvas_configure)
+
+        def _on_sidebar_mousewheel(event):
+            if hasattr(event, "num") and event.num == 4:
+                sidebar_canvas.yview_scroll(-1, "units")
+            elif hasattr(event, "num") and event.num == 5:
+                sidebar_canvas.yview_scroll(1, "units")
+            elif hasattr(event, "delta"):
+                sidebar_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+        def _bind_sidebar_scroll(event):
+            sidebar_canvas.bind_all("<MouseWheel>", _on_sidebar_mousewheel)
+            sidebar_canvas.bind_all("<Button-4>", _on_sidebar_mousewheel)
+            sidebar_canvas.bind_all("<Button-5>", _on_sidebar_mousewheel)
+
+        def _unbind_sidebar_scroll(event):
+            sidebar_canvas.unbind_all("<MouseWheel>")
+            sidebar_canvas.unbind_all("<Button-4>")
+            sidebar_canvas.unbind_all("<Button-5>")
+
+        sidebar_canvas.bind("<Enter>", _bind_sidebar_scroll)
+        sidebar_canvas.bind("<Leave>", _unbind_sidebar_scroll)
 
         tk.Label(sidebar, text="Annotator Controls", font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 10))
 
@@ -78,7 +120,7 @@ class ParkingAnnotatorApp:
         self.btn_type_ent = tk.Button(self.type_frame, text="Entrance/Exit", command=lambda: self.set_tool("entrance_exit"))
         self.btn_type_ent.pack(fill=tk.X, pady=2)
 
-        # 3. Polygon Editing
+        # 3. Polygon Editing and Listing
         edit_frame = tk.LabelFrame(sidebar, text="Polygon Editing", padx=5, pady=5)
         edit_frame.pack(fill=tk.X, pady=(0, 10))
 
@@ -93,6 +135,30 @@ class ParkingAnnotatorApp:
 
         btn_clear_all = tk.Button(edit_frame, text="Clear ALL Polygons", command=self.clear_all)
         btn_clear_all.pack(fill=tk.X, pady=2)
+
+        list_frame = tk.LabelFrame(sidebar, text="Annotations (select to remove)", padx=5, pady=5)
+        list_frame.pack(fill=tk.X, pady=(0, 10))
+
+        list_container = tk.Frame(list_frame)
+        list_container.pack(fill=tk.BOTH, expand=True)
+
+        list_scrollbar = tk.Scrollbar(list_container, orient=tk.VERTICAL)
+        list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.polygon_listbox = tk.Listbox(
+            list_container,
+            height=6,
+            exportselection=False,
+            yscrollcommand=list_scrollbar.set
+        )
+
+        self.polygon_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        list_scrollbar.config(command=self.polygon_listbox.yview)
+
+        self.polygon_listbox.bind("<<ListboxSelect>>", self.on_polygon_select)
+
+        btn_delete_selected = tk.Button(list_frame, text="Delete Selected", command=self.delete_selected_polygon, bg="red", fg="white")
+        btn_delete_selected.pack(fill=tk.X, pady=(5, 0))
 
         # 4. View Controls
         view_frame = tk.LabelFrame(sidebar, text="View Controls", padx=5, pady=5)
@@ -165,6 +231,7 @@ class ParkingAnnotatorApp:
         self.polygons = []
         self.current_polygon = []
         self.poly_id_counter = 1
+        self.selected_polygon_id = None
         
         base_dir = os.path.dirname(self.image_path)
         base_name = os.path.splitext(os.path.basename(self.image_path))[0]
@@ -212,6 +279,7 @@ class ParkingAnnotatorApp:
             self.status_var.set(f"Loaded {os.path.basename(file_path)}. Start drawing!")
             
         self.update_image_display()
+        self.refresh_polygon_list()
 
     def update_image_display(self):
         if not self.original_image:
@@ -278,6 +346,7 @@ class ParkingAnnotatorApp:
             self.current_polygon = []
             self.status_var.set(f"{self.current_poly_type} {self.poly_id_counter-1} saved. {len(self.polygons)} total.")
             self.redraw()
+            self.refresh_polygon_list()
             self.update_live_occupancy()
 
         elif len(self.current_polygon) > 0:
@@ -291,6 +360,7 @@ class ParkingAnnotatorApp:
             # Optionally undo last completed polygon if current is empty
             self.polygons.pop()
             self.redraw()
+            self.refresh_polygon_list()
             self.status_var.set(f"Removed last polygon. {len(self.polygons)} total.")
             self.update_live_occupancy()
 
@@ -303,9 +373,60 @@ class ParkingAnnotatorApp:
             self.polygons = []
             self.current_polygon = []
             self.poly_id_counter = 1
+            self.selected_polygon_id = None
             self.redraw()
+            self.refresh_polygon_list()
             self.status_var.set("All polygons cleared.")
             self.update_live_occupancy()
+
+    def refresh_polygon_list(self):
+        """Repopulate the sidebar listbox with the current polygons (id + type)."""
+        if not hasattr(self, "polygon_listbox"):
+            return
+
+        self.polygon_listbox.delete(0, tk.END)
+        for poly in self.polygons:
+            label = f"ID {poly['id']}  -  {poly.get('type', 'parking_space')}  ({len(poly['points'])} pts)"
+            self.polygon_listbox.insert(tk.END, label)
+
+        if self.selected_polygon_id is not None:
+            for idx, poly in enumerate(self.polygons):
+                if poly["id"] == self.selected_polygon_id:
+                    self.polygon_listbox.selection_set(idx)
+                    break
+            else:
+                self.selected_polygon_id = None
+
+    def on_polygon_select(self, event):
+        selection = self.polygon_listbox.curselection()
+        if not selection:
+            self.selected_polygon_id = None
+        else:
+            idx = selection[0]
+            if 0 <= idx < len(self.polygons):
+                self.selected_polygon_id = self.polygons[idx]["id"]
+        self.redraw()
+
+    def delete_selected_polygon(self):
+        selection = self.polygon_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("Info", "Select a polygon from the list first.")
+            return
+
+        idx = selection[0]
+        if not (0 <= idx < len(self.polygons)):
+            return
+
+        poly = self.polygons[idx]
+        if not messagebox.askyesno("Confirm", f"Delete polygon ID {poly['id']} ({poly.get('type', 'parking_space')})?"):
+            return
+
+        del self.polygons[idx]
+        self.selected_polygon_id = None
+        self.refresh_polygon_list()
+        self.redraw()
+        self.status_var.set(f"Deleted polygon ID {poly['id']}. {len(self.polygons)} total.")
+        self.update_live_occupancy()
 
     def redraw(self):
         self.canvas.delete("all")
@@ -358,8 +479,13 @@ class ParkingAnnotatorApp:
                             color = style_info["canvas_colour"]
                             text_color = 'white'
                             break
+
+                # Highlight the polygon selected in the sidebar list
+                is_selected = (poly["id"] == self.selected_polygon_id)
+                outline_width = 4 if is_selected else 2
+                outline_color = 'yellow' if is_selected else color
                 
-                self.canvas.create_polygon(flat_points, outline=color, fill=fill, stipple=stipple, width=2, tags="poly")
+                self.canvas.create_polygon(flat_points, outline=outline_color, fill=fill, stipple=stipple, width=outline_width, tags="poly")
                 
                 # Draw ID in the center
                 cx = sum([p[0] for p in scaled_points]) / len(scaled_points)
@@ -424,6 +550,7 @@ class ParkingAnnotatorApp:
 
             self.current_polygon = []
             self.redraw()
+            self.refresh_polygon_list()
             self.update_live_occupancy()
             self.status_var.set(f"Automatic annotation ({mode}) added {added} detections. {len(self.polygons)} total.")
             messagebox.showinfo("Done", f"Added {added} automatically detected spaces ({mode} mode).")
