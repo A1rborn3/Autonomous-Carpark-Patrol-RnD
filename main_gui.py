@@ -103,7 +103,7 @@ class MainApp:
 
             # Export Cartesian JSON graph for manual route
             json_exp = JSONExporter(manual_output_dir)
-            json_exp.export_graph(nodes, edges, bounds, res, filename=f"{basename}_graph.json")
+            json_exp.export_graph(nodes, edges, bounds, res, filename=f"{basename}_robot_route.json")
 
             # Export Unitree Go2 waypoints & patrol runner script
             unitree_exp = UnitreeGo2Exporter(manual_output_dir)
@@ -112,7 +112,7 @@ class MainApp:
             messagebox.showinfo(
                 "Manual Route Exported",
                 f"Exported manual route with {len(nodes)} waypoints!\n\n"
-                f"Saved to: Manual Output/\n- {basename}_graph.json\n- run_go2_patrol.py"
+                f"Saved to: Manual Output/\n- {basename}_robot_route.json\n- run_go2_patrol.py"
             )
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export manual route:\n{e}")

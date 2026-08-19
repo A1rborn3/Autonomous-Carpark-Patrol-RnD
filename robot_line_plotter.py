@@ -189,9 +189,38 @@ class RobotLinePlotterApp:
             try:
                 with open(route_json_path, 'r') as f:
                     data = json.load(f)
+
+                self.lines = []
+
+                # New graph format: nodes + edges
+                if "nodes" in data and "edges" in data:
+                    meta = data.get("metadata", {})
+                    bounds = meta.get("bounds") or (self.map_metadata or {}).get("bounds")
+                    res = meta.get("resolution") or (self.map_metadata or {}).get("resolution")
+                    nodes_by_id = {n["id"]: n for n in data["nodes"]}
+                    edges = data["edges"]
+
+                    # Reconstruct lines: each edge becomes a 2-point segment
+                    for i, edge in enumerate(edges):
+                        n1 = nodes_by_id.get(edge["from_id"])
+                        n2 = nodes_by_id.get(edge["to_id"])
+                        if not n1 or not n2:
+                            continue
+                        pts = []
+                        for node in (n1, n2):
+                            nx, ny = float(node["x"]), float(node["y"])
+                            if bounds and res:
+                                x_px = int(round((nx - bounds["min_x"]) * res))
+                                y_px = int(round((bounds["max_y"] - ny) * res))
+                            else:
+                                x_px, y_px = int(nx), int(ny)
+                            pts.append((x_px, y_px))
+                        self.lines.append({"id": i + 1, "points": pts})
+
+                # Legacy format: lines list
+                else:
                     loaded_lines = data.get("lines", [])
                     is_meters = data.get("coordinate_system") == "meters"
-                    self.lines = []
                     for line_item in loaded_lines:
                         new_line = {"id": line_item["id"], "points": []}
                         for pt in line_item["points"]:
@@ -205,8 +234,8 @@ class RobotLinePlotterApp:
                                 new_line["points"].append((int(pt[0]), int(pt[1])))
                         self.lines.append(new_line)
 
-                    if self.lines:
-                        self.line_id_counter = max([l.get('id', 0) for l in self.lines]) + 1
+                if self.lines:
+                    self.line_id_counter = max([l.get('id', 0) for l in self.lines]) + 1
                 self.status_var.set(f"Loaded existing route lines from {os.path.basename(route_json_path)}")
             except Exception as e:
                 self.status_var.set(f"Loaded image {os.path.basename(file_path)}. Click to draw robot path.")
@@ -396,26 +425,19 @@ class RobotLinePlotterApp:
         base_name = os.path.splitext(os.path.basename(self.image_path))[0]
         save_path = os.path.join(base_dir, f"{base_name}_robot_route.json")
 
-        converted_lines = []
-        for line in self.lines:
-            new_line = {"id": line["id"], "points": []}
-            for pt in line["points"]:
-                x, y = pt[0], pt[1]
-                if self.map_metadata:
-                    res = self.map_metadata["resolution"]
-                    bounds = self.map_metadata["bounds"]
-                    x_m = (x / res) + bounds["min_x"]
-                    y_m = bounds["max_y"] - (y / res)
-                    new_line["points"].append([round(x_m, 6), round(y_m, 6)])
-                else:
-                    new_line["points"].append([x, y])
-            converted_lines.append(new_line)
+        # Convert pixel lines to graph nodes/edges in metric coordinates
+        nodes, edges = self._lines_to_graph_metric()
+
+        # Build metadata block (mirrors the graph export format)
+        meta = {}
+        if self.map_metadata:
+            meta["bounds"] = self.map_metadata.get("bounds", {})
+            meta["resolution"] = self.map_metadata.get("resolution")
 
         data = {
-            "image_file": os.path.basename(self.image_path),
-            "coordinate_system": "meters" if self.map_metadata else "pixels",
-            "metadata": self.map_metadata,
-            "lines": converted_lines
+            "metadata": meta,
+            "nodes": nodes,
+            "edges": edges
         }
 
         try:
@@ -423,14 +445,75 @@ class RobotLinePlotterApp:
                 json.dump(data, f, indent=4)
 
             if not quiet:
-                messagebox.showinfo("Success", f"Saved {len(self.lines)} robot route lines to {os.path.basename(save_path)}")
-            self.status_var.set(f"Saved route lines to {os.path.basename(save_path)}.")
+                messagebox.showinfo("Success", f"Saved {len(nodes)} waypoint nodes to {os.path.basename(save_path)}")
+            self.status_var.set(f"Saved route graph to {os.path.basename(save_path)}.")
             if self.on_route_saved:
                 self.on_route_saved(self.image_path)
 
         except Exception as e:
             if not quiet:
                 messagebox.showerror("Error", f"Failed to save route file:\n{e}")
+
+    def _lines_to_graph_metric(self):
+        """Convert self.lines (pixel polylines) into metric graph nodes/edges."""
+        nodes = []
+        edges = []
+        node_map = {}  # pixel key -> node_id
+        node_counter = 0
+        edge_counter = 0
+
+        for line in self.lines:
+            pts = line.get("points", [])
+            if len(pts) < 2:
+                continue
+            prev_id = None
+            for i, pt in enumerate(pts):
+                pt_key = (int(round(pt[0])), int(round(pt[1])))
+
+                if pt_key not in node_map:
+                    node_id = f"manual_node_{node_counter}"
+                    node_map[pt_key] = node_id
+
+                    # Convert pixel -> meters
+                    if self.map_metadata:
+                        res = self.map_metadata["resolution"]
+                        bounds = self.map_metadata["bounds"]
+                        x_m = round((pt_key[0] / res) + bounds["min_x"], 6)
+                        y_m = round(bounds["max_y"] - (pt_key[1] / res), 6)
+                    else:
+                        x_m = float(pt_key[0])
+                        y_m = float(pt_key[1])
+
+                    if i == 0:
+                        ntype = "entrance_exit"
+                    elif i < len(pts) - 1:
+                        ntype = "turn"
+                    else:
+                        ntype = "waypoint"
+
+                    nodes.append({
+                        "id": node_id,
+                        "x": x_m,
+                        "y": y_m,
+                        "type": ntype
+                    })
+                    node_counter += 1
+                else:
+                    node_id = node_map[pt_key]
+
+                if prev_id and prev_id != node_id:
+                    edge_id = f"manual_edge_{edge_counter}"
+                    pair = {prev_id, node_id}
+                    if not any({e["from_id"], e["to_id"]} == pair for e in edges):
+                        edges.append({
+                            "id": edge_id,
+                            "from_id": prev_id,
+                            "to_id": node_id
+                        })
+                        edge_counter += 1
+                prev_id = node_id
+
+        return nodes, edges
 
     def manual_lines_to_graph(self):
         """Converts self.lines into nodes and edges dicts in pixel space."""

@@ -215,7 +215,7 @@ class UnifiedPipelineGUI:
             
             # JSON Export
             json_exp = JSONExporter(auto_output_dir)
-            json_path = json_exp.export_graph(nodes, edges, self.current_bounds, self.resolution.get(), filename=f"{self.file_basename}_graph.json")
+            json_path = json_exp.export_graph(nodes, edges, self.current_bounds, self.resolution.get(), filename=f"{self.file_basename}_robot_route.json")
             
             # Unitree Go2 Export
             unitree_exp = UnitreeGo2Exporter(auto_output_dir)
