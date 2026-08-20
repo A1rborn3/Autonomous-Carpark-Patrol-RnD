@@ -181,9 +181,9 @@ class RobotLinePlotterApp:
                 print(f"Failed to load parking annotations preview: {e}")
 
         # Load existing robot route lines if available
-        route_json_path = os.path.join(base_dir, f"{base_name}_robot_route.json")
+        route_json_path = os.path.join(base_dir, f"{base_name}_graph.json")
         if not os.path.exists(route_json_path):
-            route_json_path = os.path.join(base_dir, "orthomosaic_robot_route.json")
+            route_json_path = os.path.join(base_dir, "orthomosaic_graph.json")
 
         if os.path.exists(route_json_path):
             try:
@@ -423,7 +423,7 @@ class RobotLinePlotterApp:
 
         base_dir = os.path.dirname(self.image_path)
         base_name = os.path.splitext(os.path.basename(self.image_path))[0]
-        save_path = os.path.join(base_dir, f"{base_name}_robot_route.json")
+        save_path = os.path.join(base_dir, f"{base_name}_graph.json")
 
         # Convert pixel lines to graph nodes/edges in metric coordinates
         nodes, edges = self._lines_to_graph_metric()

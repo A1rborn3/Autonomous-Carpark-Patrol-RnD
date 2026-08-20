@@ -9,6 +9,7 @@ class MapGenerator:
         :param resolution: Pixels per meter. Default is 20 (0.05m per pixel).
         """
         self.resolution = resolution
+        self.entrance_mask = None
 
     def generate_maps(self, ground_pcd, obstacle_pcd):
         """
@@ -86,6 +87,13 @@ class MapGenerator:
         # Convert grayscale occupancy to BGR so external scripts/editors can paint pure colors (like Blue) on it
         occupancy_bgr = cv2.cvtColor(occupancy, cv2.COLOR_GRAY2BGR)
         cv2.imwrite(occ_path, occupancy_bgr)
+
+        # Save the entrance mask if any entrances were painted
+        if self.entrance_mask is not None:
+            mask_dir = os.path.dirname(occ_path)
+            mask_path = os.path.join(mask_dir, "entrance_mask.png") if mask_dir else "entrance_mask.png"
+            cv2.imwrite(mask_path, self.entrance_mask)
+            print(f"Entrance mask saved to {mask_path}")
         
         # Save map metadata
         meta_data = {
@@ -117,9 +125,13 @@ class MapGenerator:
         if not parking_spaces:
             return occupancy
             
-        # Ensure occupancy is BGR color to support blue
+                # Ensure occupancy is BGR color to support blue
         if len(occupancy.shape) == 2:
             occupancy = cv2.cvtColor(occupancy, cv2.COLOR_GRAY2BGR)
+
+        # Single-channel entrance mask so downstream code never needs cv2.inRange
+        if self.entrance_mask is None or self.entrance_mask.shape[:2] != occupancy.shape[:2]:
+            self.entrance_mask = np.zeros(occupancy.shape[:2], dtype=np.uint8)
             
         # Draw each polygon on the occupancy map
         for space in parking_spaces:
@@ -146,11 +158,16 @@ class MapGenerator:
 
 
             
-            # Fill with color
+             # Fill with color
             cv2.fillPoly(occupancy, [pts_px], color)
             
             # Add a small buffer/thickness
             cv2.polylines(occupancy, [pts_px], isClosed=True, color=color, thickness=int(0.5 * res))
+
+            # Record entrance areas in the separate single-channel mask
+            if poly_type == "entrance_exit":
+                cv2.fillPoly(self.entrance_mask, [pts_px], 255)
+                cv2.polylines(self.entrance_mask, [pts_px], isClosed=True, color=255, thickness=int(0.5 * res))
             
         return occupancy
 

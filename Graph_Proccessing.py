@@ -25,12 +25,19 @@ class GraphProcessor:
         self.output_dir = Path(output_dir)
 
     def find_edges_per_node(self):
-        graph_path = self.output_dir / "Smart_Parking_Park_graph.json"
-        if graph_path.exists():
-            print(f"Found: {graph_path}")
-        else:
-            print(f"Graph file not found at: {graph_path}")
+        automated_graphs = sorted((self.output_dir / "Automated_Output").glob("*_graph.json"))
+        manual_graphs = sorted((self.output_dir / "Manual_Output").glob("*.json"))
+        graph_path = automated_graphs[0] if automated_graphs else (manual_graphs[0] if manual_graphs else None)
+
+        if graph_path is None:
+            print(
+                "Graph file not found in "
+                f"{self.output_dir / 'Automated_Output'} or "
+                f"{self.output_dir / 'Manual_Output'}"
+            )
             return
+
+        print(f"Found: {graph_path}")
             
         with open(graph_path, 'r') as file:
             data = json.load(file)
@@ -155,10 +162,16 @@ class GraphProcessor:
                         #True angle bisector (sum of normalized vectors)
                         bisector_x = img_v1x + img_v2x
                         bisector_y = img_v1y + img_v2y
-                        
-                    
-                        road_dir_x = bisector_x
-                        road_dir_y = bisector_y
+
+                        if math.hypot(bisector_x, bisector_y) < 0.01:
+                            # Straight segments have opposite vectors, so their
+                            # angle-bisector sum is zero. Use a cross-section
+                            # perpendicular to the segment instead.
+                            road_dir_x = -img_v1y
+                            road_dir_y = img_v1x
+                        else:
+                            road_dir_x = bisector_x
+                            road_dir_y = bisector_y
                         valid_dir = True
 
             # HANDLE 1-EDGE NODES (Dead-ends / Entrances)
@@ -173,8 +186,9 @@ class GraphProcessor:
                         
                         # Flip the perpendicular vector to swap side 1 and side 2
                         # This prevents the "X" crossing when connecting boundary nodes later
-                        road_dir_x = -map_road_dir_y 
-                        road_dir_y = -map_road_dir_x #-/+ to edit 90 degree rotation
+                        # Preserve the original terminal cross-section convention.
+                        road_dir_x = -map_road_dir_y
+                        road_dir_y = -map_road_dir_x
                         
                         valid_dir = True
                         
@@ -764,15 +778,16 @@ class GraphProcessor:
 
             edge_id_counter += 1
 
-        def segment_deepest_violation(px1, py1, px2, py2, segment_index=0):
+        def segment_primary_collision_point(px1, py1, px2, py2, segment_index=0):
             """
-            Samples a segment and returns the deepest violating point.
+            Finds the single best correction point for a segment.
 
-            If the segment is only inside the clearance buffer, the deepest point
-            is the point with the smallest clearance margin.
+            If the segment enters actual occupancy, return the DEEPEST occupied point
+            (the occupied point farthest from free space). Walking this one point out
+            lets a single inserted node route the polyline around the obstacle.
 
-            If the segment enters occupancy, the deepest point is the point with
-            the largest distance to free space.
+            Only if there is no occupancy at all, and the segment cuts deeply into the
+            clearance buffer (less than half the clearance), return the tightest point.
             """
             dx = px2 - px1
             dy = py2 - py1
@@ -784,7 +799,12 @@ class GraphProcessor:
             steps = max(2, int(math.ceil(length)))
             img_h, img_w = dist_transform.shape
 
-            best = None
+            deepest_occupied = None
+            min_clearance_point = None
+
+            # Only treat a clearance violation as real if it cuts deep
+            # (less than half the clearance). Shallow grazes are ignored.
+            clearance_hard_px = clearance_px * 0.5
 
             for i in range(steps + 1):
                 t = float(i) / float(steps)
@@ -799,36 +819,44 @@ class GraphProcessor:
 
                 margin = float(dist_transform[iy, ix])
 
-                # Effectively clear.
-                if margin >= clearance_px - 1e-3:
-                    continue
+                # Deep clearance cut only (shallow grazes ignored).
+                if margin < clearance_hard_px:
+                    if min_clearance_point is None or margin < min_clearance_point["margin"]:
+                        min_clearance_point = {
+                            "priority": 1,
+                            "x": x,
+                            "y": y,
+                            "t": t,
+                            "ix": ix,
+                            "iy": iy,
+                            "margin": margin,
+                            "inside_depth": 0.0,
+                            "segment_index": segment_index
+                        }
 
+                # Actual occupancy collision: keep the deepest occupied point.
                 if margin <= 0.0:
-                    # Inside occupancy.
-                    # Larger inside_distance means deeper inside occupied space.
                     depth = float(inside_distance[iy, ix])
-                    severity = clearance_px + depth
-                    inside = True
-                else:
-                    # Outside occupancy, but inside the clearance buffer.
-                    depth = 0.0
-                    severity = clearance_px - margin
-                    inside = False
+                    if deepest_occupied is None or depth > deepest_occupied["inside_depth"]:
+                        deepest_occupied = {
+                            "priority": 2,
+                            "x": x,
+                            "y": y,
+                            "t": t,
+                            "ix": ix,
+                            "iy": iy,
+                            "margin": margin,
+                            "inside_depth": depth,
+                            "segment_index": segment_index
+                        }
 
-                if best is None or severity > best["severity"]:
-                    best = {
-                        "severity": severity,
-                        "x": x,
-                        "y": y,
-                        "ix": ix,
-                        "iy": iy,
-                        "margin": margin,
-                        "inside_depth": depth,
-                        "inside": inside,
-                        "segment_index": segment_index
-                    }
+            if deepest_occupied is not None:
+                return deepest_occupied
 
-            return best
+            if min_clearance_point is not None:
+                return min_clearance_point
+
+            return None
 
         def walk_to_clearance(px, py):
             """
@@ -902,8 +930,12 @@ class GraphProcessor:
             """
             Connect two boundary nodes.
 
-            If the segment violates clearance/occupancy, insert up to 3 walked
-            waypoints along the deepest violating parts of the polyline.
+            Primary correction:
+                Insert one node at the last point exiting occupancy.
+
+            Backup:
+                If the boundary connection is still violating afterwards, repeat
+                up to 3 times total.
             """
             nonlocal node_id_counter
 
@@ -922,11 +954,12 @@ class GraphProcessor:
             # The connection starts as a straight line between the two boundary nodes.
             polyline = [from_bn, to_bn]
 
+            # Additional nodes are a backup, not the default primary method.
             max_insertions = 3
             insertions = 0
 
             while insertions < max_insertions:
-                worst = None
+                best = None
 
                 # Check every current segment in the polyline.
                 for seg_idx in range(len(polyline) - 1):
@@ -936,22 +969,41 @@ class GraphProcessor:
                     ax, ay = m_to_px(a["x"], a["y"])
                     bx, by = m_to_px(b["x"], b["y"])
 
-                    seg_worst = segment_deepest_violation(ax, ay, bx, by, seg_idx)
+                    candidate = segment_primary_collision_point(ax, ay, bx, by, seg_idx)
 
-                    if seg_worst is None:
+                    if candidate is None:
                         continue
 
-                    if worst is None or seg_worst["severity"] > worst["severity"]:
-                        worst = seg_worst
+                    if best is None:
+                        best = candidate
+                        continue
 
-                # No remaining violations.
-                if worst is None:
+                    # Prefer actual occupancy exit points over clearance-only fallback points.
+                    if candidate["priority"] > best["priority"]:
+                        best = candidate
+
+                    # For equal priority, prefer the later point along the polyline.
+                    elif candidate["priority"] == best["priority"]:
+                        candidate_order = (
+                            candidate["segment_index"],
+                            candidate.get("t", 0.0)
+                        )
+                        best_order = (
+                            best["segment_index"],
+                            best.get("t", 0.0)
+                        )
+
+                        if candidate_order > best_order:
+                            best = candidate
+
+                # No remaining collision/clearance issue.
+                if best is None:
                     break
 
-                walked_x, walked_y = walk_to_clearance(worst["x"], worst["y"])
+                walked_x, walked_y = walk_to_clearance(best["x"], best["y"])
 
                 # If walking did not move the point, stop to avoid useless duplicate nodes.
-                if math.hypot(walked_x - worst["x"], walked_y - worst["y"]) < 0.25:
+                if math.hypot(walked_x - best["x"], walked_y - best["y"]) < 0.25:
                     break
 
                 wx_m, wy_m = px_to_m(walked_x, walked_y)
@@ -973,12 +1025,12 @@ class GraphProcessor:
                 boundary_nodes.append(inserted_node)
 
                 # Insert the new waypoint into the polyline.
-                insert_at = worst["segment_index"] + 1
+                insert_at = best["segment_index"] + 1
                 polyline.insert(insert_at, inserted_node)
 
                 insertions += 1
 
-            # Optional warning if the edge is still violating after 3 attempts.
+            # Optional warning if the edge is still violating after the backup insertions.
             still_violating = False
             for seg_idx in range(len(polyline) - 1):
                 a = polyline[seg_idx]
@@ -987,7 +1039,7 @@ class GraphProcessor:
                 ax, ay = m_to_px(a["x"], a["y"])
                 bx, by = m_to_px(b["x"], b["y"])
 
-                if segment_deepest_violation(ax, ay, bx, by, seg_idx) is not None:
+                if segment_primary_collision_point(ax, ay, bx, by, seg_idx) is not None:
                     still_violating = True
                     break
 

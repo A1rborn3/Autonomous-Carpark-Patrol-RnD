@@ -158,6 +158,28 @@ class UnifiedPipelineGUI:
         if not self.current_occ_path: return
         self.status_var.set("Extracting Road Graph...")
         threading.Thread(target=self._extraction_thread, daemon=True).start()
+
+    def _load_occupancy_for_graph(self, occ_path):
+        """Load occupancy data as a validated color image."""
+        occ_color = cv2.imread(occ_path, cv2.IMREAD_COLOR)
+        if occ_color is None:
+            raise FileNotFoundError(f"Could not read occupancy map: {occ_path}")
+
+        return occ_color
+
+    def _extract_blue_mask(self, occ_color):
+        """Extract blue entrance markers from a validated BGR occupancy image."""
+        blue_mask = np.where(
+            (occ_color[:, :, 0] >= 200)
+            & (occ_color[:, :, 1] <= 50)
+            & (occ_color[:, :, 2] <= 50),
+            255,
+            0,
+        ).astype(np.uint8)
+        if cv2.countNonZero(blue_mask) == 0:
+            blue_mask = None
+
+        return blue_mask
         
     def _extraction_thread(self):
         try:
@@ -165,7 +187,7 @@ class UnifiedPipelineGUI:
             occ_path = os.path.join(output_dir, "obstacle_occupancy.png")
             park_json_path = os.path.join(output_dir, "orthomosaic_parking_spaces.json")
             
-            occ = cv2.imread(occ_path, cv2.IMREAD_GRAYSCALE)
+            occ = self._load_occupancy_for_graph(occ_path)
             map_gen = MapGenerator(resolution=self.resolution.get())
             
             # Merge parking annotations from JSON if they exist
@@ -185,29 +207,16 @@ class UnifiedPipelineGUI:
                 if park_occ is not None:
                     occ = cv2.min(occ, park_occ)
 
-            
-            # If occ was merged, it might be BGR (color). We need to extract the blue mask
-            # from the color version, then convert the map to grayscale for the skeletonizer.
-            if len(occ.shape) == 3:
-                # BGR: Pure Blue is [255, 0, 0]
-                blue_mask = cv2.inRange(occ, np.array([200, 0, 0]), np.array([255, 50, 50]))
-                if cv2.countNonZero(blue_mask) == 0:
-                    blue_mask = None
-                # Convert to grayscale for graph extraction
-                occ = cv2.cvtColor(occ, cv2.COLOR_BGR2GRAY)
-            else:
-                # If grayscale, check the original color file for blue marks
-                occ_color = cv2.imread(occ_path, cv2.IMREAD_COLOR)
-                blue_mask = cv2.inRange(occ_color, np.array([200, 0, 0]), np.array([255, 50, 50]))
-                if cv2.countNonZero(blue_mask) == 0:
-                    blue_mask = None
-
+            if len(occ.shape) == 2:
+                occ = cv2.cvtColor(occ, cv2.COLOR_GRAY2BGR)
+            blue_mask = self._extract_blue_mask(occ)
+            occ = cv2.cvtColor(occ, cv2.COLOR_BGR2GRAY)
 
             
             graph_ext = RoadGraphExtractor(min_lane_width=self.min_lane_width.get(), pixels_per_meter=self.resolution.get())
             
             # Save automated outputs to a dedicated subfolder
-            auto_output_dir = os.path.join(output_dir, "Automated Output")
+            auto_output_dir = os.path.join(output_dir, "Automated_Output")
             os.makedirs(auto_output_dir, exist_ok=True)
             
             nodes, edges = graph_ext.extract_graph(occ, auto_output_dir, blue_mask)
@@ -215,7 +224,7 @@ class UnifiedPipelineGUI:
             
             # JSON Export
             json_exp = JSONExporter(auto_output_dir)
-            json_path = json_exp.export_graph(nodes, edges, self.current_bounds, self.resolution.get(), filename=f"{self.file_basename}_robot_route.json")
+            json_path = json_exp.export_graph(nodes, edges, self.current_bounds, self.resolution.get(), filename=f"{self.file_basename}_graph.json")
             
             # Unitree Go2 Export
             unitree_exp = UnitreeGo2Exporter(auto_output_dir)
