@@ -24,12 +24,11 @@ class GraphProcessor:
     def __init__(self, output_dir):
         self.output_dir = Path(output_dir)
 
-    def find_edges_per_node(self):
-        automated_graphs = sorted((self.output_dir / "Automated_Output").glob("*_graph.json"))
-        manual_graphs = sorted((self.output_dir / "Manual_Output").glob("*.json"))
-        graph_path = automated_graphs[0] if automated_graphs else (manual_graphs[0] if manual_graphs else None)
+        self.automated_graphs = sorted((self.output_dir / "Automated_Output").glob("*_graph.json"))
+        self.manual_graphs = sorted((self.output_dir / "Manual_Output").glob("*.json"))
+        self.graph_path = self.automated_graphs[0] if self.automated_graphs else (self.manual_graphs[0] if self.manual_graphs else None)
 
-        if graph_path is None:
+        if self.graph_path is None:
             print(
                 "Graph file not found in "
                 f"{self.output_dir / 'Automated_Output'} or "
@@ -37,9 +36,12 @@ class GraphProcessor:
             )
             return
 
-        print(f"Found: {graph_path}")
+
+    def find_edges_per_node(self):
+        
+        print(f"Found: {self.graph_path}")
             
-        with open(graph_path, 'r') as file:
+        with open(self.graph_path, 'r') as file:
             data = json.load(file)
             
         all_edges = []
@@ -104,8 +106,11 @@ class GraphProcessor:
             except Exception as e:
                 print(f"Warning: Could not parse metadata: {e}")
                 
-        #Load occupancy image and compute Distance Transform
-        occ_path = self.output_dir / "occupancy_clean.png"
+        # Load occupancy image and compute Distance Transform.
+        # occupancy_clean.png is written by road_graph_extractor into
+        # Automated_Output/. Prefer it (noise-filtered) and fall back to
+        # merged_occupancy.png in the parent dir. Both use white = free space.
+        occ_path = self.graph_path.parent / "occupancy_clean.png"
         if not occ_path.exists():
             occ_path = self.output_dir / "merged_occupancy.png"
             
@@ -433,9 +438,11 @@ class GraphProcessor:
                 min_x = float(bounds.get('min_x', 0.0))
                 max_y = float(bounds.get('max_y', 0.0))
                 
-        occ_path = self.output_dir / "merged_occupancy.png"
+        # occupancy_clean.png lives in Automated_Output/ (written by extractor).
+        # Fall back to merged_occupancy.png in the parent dir.
+        occ_path = self.graph_path.parent / "occupancy_clean.png"
         if not occ_path.exists():
-            occ_path = self.output_dir / "occupancy_clean.png"
+            occ_path = self.output_dir / "merged_occupancy.png"
             
         occupancy_img = cv2.imread(str(occ_path), cv2.IMREAD_GRAYSCALE)
         if occupancy_img is None:
@@ -1255,7 +1262,9 @@ class GraphProcessor:
     ):
         print("\n--- Generating Boundary Graph Visual Debug ---")
 
-        occ_path = self.output_dir / "occupancy_clean.png"
+        # occupancy_clean.png lives in Automated_Output/ (written by extractor).
+        # Fall back to merged_occupancy.png in the parent dir.
+        occ_path = self.graph_path.parent / "occupancy_clean.png"
         if not occ_path.exists():
             occ_path = self.output_dir / "merged_occupancy.png"
 

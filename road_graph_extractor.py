@@ -41,6 +41,9 @@ class RoadGraphExtractor:
         skeleton = (skeleton_bool * 255).astype(np.uint8)
         cv2.imwrite(os.path.join(output_dir, "skeleton.png"), skeleton)
         
+        # Save cleaned occupancy map (white = free space, black = obstacle)
+        cv2.imwrite(os.path.join(output_dir, "occupancy_clean.png"), occ_clean)
+        
         # 5. Graph Extraction
         logging.info("Detecting nodes and edges...")
         skel_norm = (skeleton // 255).astype(np.uint8)
