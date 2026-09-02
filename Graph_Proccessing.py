@@ -7,6 +7,8 @@ import math
 import cv2
 import numpy as np
 
+import Routing
+
 @dataclass       
 class Node:
     node_id: int
@@ -1362,6 +1364,7 @@ def main():
     print("Running GraphProcessor on:", args.output_dir)
     gp = GraphProcessor(args.output_dir)
     gp.find_edges_per_node()
+    Router = Routing.main()
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from robot_line_plotter import RobotLinePlotterApp
 from json_exporter import JSONExporter
 from unitree_exporter import UnitreeGo2Exporter
 
+import Graph_Proccessing 
 
 class MainApp:
     def __init__(self, root):
@@ -114,6 +115,8 @@ class MainApp:
                 f"Exported manual route with {len(nodes)} waypoints!\n\n"
                 f"Saved to: Manual Output/\n- {basename}_graph.json\n- run_go2_patrol.py"
             )
+
+
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export manual route:\n{e}")
 
@@ -134,6 +137,7 @@ class MainApp:
         """Callback triggered when automated graph extraction finishes."""
         self.line_plotter_app.set_extracted_graph(nodes, edges)
         self.notebook.select(self.tab_line_plotter)
+        graph_processor = Graph_Proccessing.main()
 
 
 if __name__ == "__main__":
