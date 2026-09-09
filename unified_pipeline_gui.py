@@ -226,12 +226,8 @@ class UnifiedPipelineGUI:
             json_exp = JSONExporter(auto_output_dir)
             json_path = json_exp.export_graph(nodes, edges, self.current_bounds, self.resolution.get(), filename=f"{self.file_basename}_graph.json")
             
-            # Unitree Go2 Export
-            unitree_exp = UnitreeGo2Exporter(auto_output_dir)
-            unitree_exp.export_unitree_waypoints(nodes, edges, self.current_bounds, self.resolution.get(), filename_prefix=self.file_basename)
-
             self.root.after(0, lambda: self.display_graph(nodes, edges))
-            self.root.after(0, lambda: self.status_var.set(f"Graph extracted & Unitree Go2 waypoints saved."))
+            self.root.after(0, lambda: self.status_var.set(f"Graph extracted."))
 
             if self.on_graph_extracted:
                 self.root.after(0, lambda: self.on_graph_extracted(nodes, edges))

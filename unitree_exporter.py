@@ -75,10 +75,13 @@ class UnitreeGo2Exporter:
 
         return path
 
-    def export_unitree_waypoints(self, nodes, edges, bounds, resolution, filename_prefix="road_graph"):
+    def export_unitree_waypoints(self, nodes, edges, bounds, resolution, filename_prefix="road_graph", patrol_route=None):
         """
         Exports waypoints for Unitree Go2 (G02) robot dog in JSON, YAML, and Python runner script.
         """
+        if patrol_route is not None:
+            return self.export_patrol_route(patrol_route, filename_prefix=filename_prefix)
+
         cartesian_nodes = {}
         for node in nodes:
             # Convert pixel (u, v) to meter (x, y)
@@ -375,7 +378,7 @@ class UnitreeGo2Exporter:
             lines.append(f"    wait_time_sec: {wp['wait_time_sec']}")
 
         with open(path, 'w') as f:
-            f.write("\n".join(lines) + "\n")
+            f.write("\\n".join(lines) + "\\n")
 
     def _generate_runner_script(self, json_filename):
         """Generates `run_go2_patrol.py` in output_dir to command the Unitree Go2 robot dog.
@@ -653,7 +656,7 @@ class Go2PatrolController:
 
         while True:
             if _check_for_space_kill():
-                print("\nKill switch pressed. Stopping.")
+                print("\\n Kill switch pressed. Stopping.")
                 self._stop()
                 self.stand_down()
                 return False
@@ -689,7 +692,7 @@ class Go2PatrolController:
             target_yaw_rad = math.radians(target_yaw_deg)
             while True:
                 if _check_for_space_kill():
-                    print("\nKill switch pressed. Stopping.")
+                    print("\\nKill switch pressed. Stopping.")
                     self._stop()
                     self.stand_down()
                     return False
@@ -728,7 +731,7 @@ class Go2PatrolController:
                     t0 = time.time()
                     while time.time() - t0 < wait_time:
                         if _check_for_space_kill():
-                            print("\nKill switch pressed. Stopping.")
+                            print("\\nKill switch pressed. Stopping.")
                             self._stop()
                             self.stand_down()
                             return
@@ -742,19 +745,19 @@ class Go2PatrolController:
                     self.stand_down()
             except Exception as e:
                 # If the robot disconnects during shutdown, we just print it and exit cleanly
-                print(f"\nNote: Shutdown command interrupted ({e}). Robot may need manual sit")
+                print(f"\\nNote: Shutdown command interrupted ({e}). Robot may need manual sit")
 
         
 
 
 def run_patrol_simulation(waypoints_data, speed_factor=1.0):
-    print("\n=======================================================")
+    print("\\n=======================================================")
     print("      UNITREE GO2 PATROL SIMULATION / DRY-RUN MODE     ")
     print("=======================================================")
     waypoints = waypoints_data.get("waypoints", [])
     meta = waypoints_data.get("metadata", {})
     print(f"Loaded {len(waypoints)} waypoints across {meta.get('total_patrol_distance_m', 0)} meters.")
-    print("Starting simulated route execution...\n")
+    print("Starting simulated route execution...\\n")
 
     curr_x, curr_y = 0.0, 0.0
 
@@ -779,7 +782,7 @@ def run_patrol_simulation(waypoints_data, speed_factor=1.0):
             px = curr_x + ratio * (target_x - curr_x)
             py = curr_y + ratio * (target_y - curr_y)
             bar = "=" * (s * 4) + ">" + "." * ((steps - s) * 4)
-            print(f"   [{bar}] Robot pos: ({px:6.2f}, {py:6.2f})", end="\r")
+            print(f"   [{bar}] Robot pos: ({px:6.2f}, {py:6.2f})", end="\\r")
             time.sleep(0.1 / speed_factor)
         print()
 
@@ -788,7 +791,7 @@ def run_patrol_simulation(waypoints_data, speed_factor=1.0):
         time.sleep(min(wait_time, 0.5) / speed_factor)
         print("-" * 55)
 
-    print("\n[SUCCESS] Unitree Go2 patrol mission simulation finished successfully!")
+    print("\\n[SUCCESS] Unitree Go2 patrol mission simulation finished successfully!")
 
 
 def main():
@@ -827,3 +830,54 @@ if __name__ == "__main__":
             pass
         print(f"Unitree Go2 runner script generated at {runner_path}")
         return runner_path
+
+    def export_patrol_route(self, route_data, filename_prefix="road_graph"):
+        """Export an ordered patrol route produced by the boundary router."""
+        route = route_data.get('route', [])
+        if not route:
+            raise ValueError("Patrol route contains no waypoints")
+
+        formatted_waypoints = []
+        total_distance = 0.0
+        for index, waypoint in enumerate(route[:-1]):
+            next_waypoint = route[index + 1]
+            dx = next_waypoint['x'] - waypoint['x']
+            dy = next_waypoint['y'] - waypoint['y']
+            total_distance += math.hypot(dx, dy)
+            yaw_rad = math.atan2(dy, dx)
+            formatted_waypoints.append({
+                'seq': index,
+                'id': waypoint['id'],
+                'type': waypoint.get('type', 'waypoint'),
+                'x': round(waypoint['x'], 4),
+                'y': round(waypoint['y'], 4),
+                'z': 0.0,
+                'yaw_rad': round(yaw_rad, 4),
+                'yaw_deg': round(math.degrees(yaw_rad), 2),
+                'target_speed_m_s': 0.8,
+                'tolerance_m': 0.3,
+                'wait_time_sec': 2.0 if waypoint.get('type') == 'start' else 0.5
+            })
+
+        data = {
+            'robot': {
+                'model': 'Unitree Go2 / G02',
+                'frame_id': 'map',
+                'default_speed_m_s': 0.8,
+                'gait_type': 'trot'
+            },
+            'metadata': {
+                'total_waypoints': len(formatted_waypoints),
+                'total_patrol_distance_m': round(total_distance, 2)
+            },
+            'waypoints': formatted_waypoints,
+            'route': route_data
+        }
+
+        os.makedirs(self.output_dir, exist_ok=True)
+        graph_json_filename = f"{filename_prefix}_graph.json"
+        graph_json_path = os.path.join(self.output_dir, graph_json_filename)
+        with open(graph_json_path, 'w') as file:
+            json.dump(data, file, indent=4)
+
+        return self._generate_runner_script(graph_json_filename)

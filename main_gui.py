@@ -137,7 +137,18 @@ class MainApp:
         """Callback triggered when automated graph extraction finishes."""
         self.line_plotter_app.set_extracted_graph(nodes, edges)
         self.notebook.select(self.tab_line_plotter)
-        graph_processor = Graph_Proccessing.main()
+        route_data = Graph_Proccessing.main(self._get_export_context()[0])
+        if route_data:
+            out_dir, bounds, res, basename = self._get_export_context()
+            auto_output_dir = os.path.join(out_dir, "Automated_Output")
+            UnitreeGo2Exporter(auto_output_dir).export_unitree_waypoints(
+                nodes,
+                edges,
+                bounds,
+                res,
+                filename_prefix=basename,
+                patrol_route=route_data
+            )
 
 
 if __name__ == "__main__":

@@ -577,7 +577,7 @@ class PatrolRouter:
         }
 
 
-def main():
+def main(output_dir=None):
     """Main entry point."""
     parser = argparse.ArgumentParser(
         description="Compute closed patrol route from boundary graph"
@@ -595,10 +595,12 @@ def main():
         help="Preferred entrance side",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args([] if output_dir is not None else None)
 
     # Determine output directory
-    if args.output_dir is None:
+    if output_dir is not None:
+        args.output_dir = Path(output_dir)
+    elif args.output_dir is None:
         script_dir = Path(__file__).parent
         args.output_dir = script_dir / "output" / "Smart_Parking_Park"
     else:
@@ -656,9 +658,8 @@ def main():
     else:
         print("[Routing] All nodes connected!")
 
-
-
     print("[Routing] Done!")
+    return output_data
 
 
 if __name__ == "__main__":

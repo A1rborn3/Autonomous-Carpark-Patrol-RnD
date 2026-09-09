@@ -85,6 +85,7 @@ class GraphProcessor:
 
         # Trigger the new boundary generation function
         self.generate_road_boundaries(all_nodes, all_edges)
+        return Routing.main(self.output_dir)
 
 
     def generate_road_boundaries(self, all_nodes, all_edges):
@@ -119,7 +120,7 @@ class GraphProcessor:
         occupancy_img = cv2.imread(str(occ_path), cv2.IMREAD_GRAYSCALE)
         if occupancy_img is None:
             print("Error: Failed to load occupancy image.")
-            return
+            return None
 
         _, occ_bin = cv2.threshold(occupancy_img, 254, 255, cv2.THRESH_BINARY)
         dist_transform = cv2.distanceTransform(occ_bin, cv2.DIST_L2, 5)
@@ -1355,16 +1356,17 @@ class GraphProcessor:
         print(f"Saved boundary graph visual debug to: {out_path}")
 
 
-def main():
+def main(output_dir=None):
     default_output = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output/Smart_Parking_Park")
     parser = argparse.ArgumentParser(description="Run GraphProcessor (minimal runner)")
     parser.add_argument("--output-dir", "-o", default=default_output, help="Path to output directory")
-    args = parser.parse_args()
+    args = parser.parse_args([] if output_dir is not None else None)
+    if output_dir is not None:
+        args.output_dir = output_dir
 
     print("Running GraphProcessor on:", args.output_dir)
     gp = GraphProcessor(args.output_dir)
-    gp.find_edges_per_node()
-    Router = Routing.main()
+    return gp.find_edges_per_node()
 
 
 if __name__ == "__main__":
