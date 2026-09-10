@@ -110,6 +110,18 @@ class MainApp:
             unitree_exp = UnitreeGo2Exporter(manual_output_dir)
             unitree_exp.export_unitree_waypoints(nodes, edges, bounds, res, filename_prefix=basename)
 
+            # Build the boundary graph and route from the newly exported manual graph.
+            route_data = Graph_Proccessing.main(out_dir)
+            if route_data:
+                unitree_exp.export_unitree_waypoints(
+                    nodes,
+                    edges,
+                    bounds,
+                    res,
+                    filename_prefix=f"{basename}_patrol_route",
+                    patrol_route=route_data
+                )
+
             messagebox.showinfo(
                 "Manual Route Exported",
                 f"Exported manual route with {len(nodes)} waypoints!\n\n"
@@ -146,7 +158,7 @@ class MainApp:
                 edges,
                 bounds,
                 res,
-                filename_prefix=basename,
+                filename_prefix=f"{basename}_patrol_route",
                 patrol_route=route_data
             )
 

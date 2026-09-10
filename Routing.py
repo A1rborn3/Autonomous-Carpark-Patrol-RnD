@@ -610,23 +610,29 @@ def main(output_dir=None):
 
     print(f"[Routing] Output directory: {args.output_dir}")
 
-    # Load boundary graph
-    boundary_graph_path = args.output_dir / "Smart_Parking_Park_boundary_graph.json"
-    if not boundary_graph_path.exists():
-        print(f"[Routing] ERROR: Boundary graph not found at {boundary_graph_path}")
-        sys.exit(1)
+    # Load the boundary graph generated for this output directory. The graph
+    # basename depends on the input map, so do not assume Smart_Parking_Park.
+    boundary_graph_paths = sorted(args.output_dir.glob("*_boundary_graph.json"))
+    if not boundary_graph_paths:
+        raise FileNotFoundError(
+            f"Boundary graph not found in {args.output_dir}. "
+            "Run graph processing first to generate *_boundary_graph.json."
+        )
+    boundary_graph_path = boundary_graph_paths[0]
 
     print(f"[Routing] Loading boundary graph from {boundary_graph_path}")
     with open(boundary_graph_path) as f:
         boundary_graph = json.load(f)
 
-    # Load main graph (optional)
+    # Load the main graph (optional), preferring the automated graph.
     main_graph = None
-    for main_graph_path in [
-        args.output_dir / "Automated_Output" / "Smart_Parking_Park_graph.json",
-        args.output_dir / "Manuel_Output" / "Smart_Parking_Park_graph.json",
-    ]:
-        if main_graph_path.exists():
+    main_graph_paths = [
+        sorted((args.output_dir / "Automated_Output").glob("*_graph.json")),
+        sorted((args.output_dir / "Manual_Output").glob("*_graph.json")),
+    ]
+    for graph_paths in main_graph_paths:
+        if graph_paths:
+            main_graph_path = graph_paths[0]
             print(f"[Routing] Loading main graph from {main_graph_path}")
             with open(main_graph_path) as f:
                 main_graph = json.load(f)

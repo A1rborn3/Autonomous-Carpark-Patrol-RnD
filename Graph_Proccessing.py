@@ -27,7 +27,7 @@ class GraphProcessor:
         self.output_dir = Path(output_dir)
 
         self.automated_graphs = sorted((self.output_dir / "Automated_Output").glob("*_graph.json"))
-        self.manual_graphs = sorted((self.output_dir / "Manual_Output").glob("*.json"))
+        self.manual_graphs = sorted((self.output_dir / "Manual_Output").glob("*_graph.json"))
         self.graph_path = self.automated_graphs[0] if self.automated_graphs else (self.manual_graphs[0] if self.manual_graphs else None)
 
         if self.graph_path is None:
@@ -48,9 +48,9 @@ class GraphProcessor:
             
         all_edges = []
         for edges_data in data["edges"]:
-            edge_id = int(edges_data['id'].split('_')[1])
-            from_id = int(edges_data['from_id'].split('_')[1])
-            to_id = int(edges_data['to_id'].split('_')[1])
+            edge_id = int(str(edges_data['id']).rsplit('_', 1)[1])
+            from_id = int(str(edges_data['from_id']).rsplit('_', 1)[1])
+            to_id = int(str(edges_data['to_id']).rsplit('_', 1)[1])
             
             edge_instance = Edges(id=edge_id, from_id=from_id, to_id=to_id)
             all_edges.append(edge_instance)
@@ -63,7 +63,7 @@ class GraphProcessor:
 
         all_nodes = []
         for node_data in data["nodes"]:
-            node_id = int(node_data['id'].split('_')[1]) 
+            node_id = int(str(node_data['id']).rsplit('_', 1)[1])
             x = float(node_data['x'])
             y = float(node_data['y'])
             node_edges = [] 
@@ -116,6 +116,10 @@ class GraphProcessor:
         occ_path = self.graph_path.parent / "occupancy_clean.png"
         if not occ_path.exists():
             occ_path = self.output_dir / "merged_occupancy.png"
+        if not occ_path.exists():
+            occ_path = self.output_dir / "obstacle_occupancy.png"
+        if not occ_path.exists():
+            occ_path = self.output_dir / "obstacle_occupancy.png"
             
         occupancy_img = cv2.imread(str(occ_path), cv2.IMREAD_GRAYSCALE)
         if occupancy_img is None:
@@ -371,7 +375,7 @@ class GraphProcessor:
 
         output_graph = {"nodes": boundary_nodes, "edges": boundary_edges}
 
-        output_path = self.output_dir / "Smart_Parking_Park_boundary_graph.json"
+        output_path = self.output_dir / f"{self.graph_path.stem.replace('_graph', '')}_boundary_graph.json"
         with open(output_path, 'w') as f:
             json.dump(output_graph, f, indent=2)
             
@@ -446,6 +450,8 @@ class GraphProcessor:
         occ_path = self.graph_path.parent / "occupancy_clean.png"
         if not occ_path.exists():
             occ_path = self.output_dir / "merged_occupancy.png"
+        if not occ_path.exists():
+            occ_path = self.output_dir / "obstacle_occupancy.png"
             
         occupancy_img = cv2.imread(str(occ_path), cv2.IMREAD_GRAYSCALE)
         if occupancy_img is None:
@@ -1270,6 +1276,8 @@ class GraphProcessor:
         occ_path = self.graph_path.parent / "occupancy_clean.png"
         if not occ_path.exists():
             occ_path = self.output_dir / "merged_occupancy.png"
+        if not occ_path.exists():
+            occ_path = self.output_dir / "obstacle_occupancy.png"
 
         occupancy_img = cv2.imread(str(occ_path), cv2.IMREAD_GRAYSCALE)
         if occupancy_img is None:
