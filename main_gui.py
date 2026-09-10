@@ -79,13 +79,20 @@ class MainApp:
 
     def _get_export_context(self):
         """Gets output directory, bounds, resolution, and basename from pipeline or line plotter."""
-        img_path = self.line_plotter_app.image_path
-        if img_path:
-            base_dir = os.path.dirname(img_path)
-            basename = os.path.splitext(os.path.basename(img_path))[0]
+        if hasattr(self.pipeline_app, 'current_output_dir') and self.pipeline_app.current_output_dir:
+            base_dir = self.pipeline_app.current_output_dir
+        elif self.line_plotter_app.image_path:
+            base_dir = os.path.dirname(self.line_plotter_app.image_path)
+        elif self.pipeline_app.file_basename:
+            base_dir = os.path.join(self.pipeline_app.output_dir.get(), self.pipeline_app.file_basename)
         else:
             base_dir = self.pipeline_app.output_dir.get()
-            basename = self.pipeline_app.file_basename or "road_graph"
+
+        # Normalize basename: Never use 'orthomosaic'! Use the carpark directory/file basename.
+        raw_name = self.pipeline_app.file_basename or os.path.basename(base_dir)
+        if raw_name in ("output", "orthomosaic", ""):
+            raw_name = "road_graph"
+        basename = raw_name.replace(" ", "_")
 
         meta = self.line_plotter_app.map_metadata or {}
         bounds = self.pipeline_app.current_bounds or meta.get("bounds", {'min_x': 0, 'max_x': 100, 'min_y': 0, 'max_y': 100})
@@ -137,18 +144,21 @@ class MainApp:
         """Callback triggered when automated graph extraction finishes."""
         self.line_plotter_app.set_extracted_graph(nodes, edges)
         self.notebook.select(self.tab_line_plotter)
-        route_data = Graph_Proccessing.main(self._get_export_context()[0])
-        if route_data:
-            out_dir, bounds, res, basename = self._get_export_context()
-            auto_output_dir = os.path.join(out_dir, "Automated_Output")
-            UnitreeGo2Exporter(auto_output_dir).export_unitree_waypoints(
-                nodes,
-                edges,
-                bounds,
-                res,
-                filename_prefix=basename,
-                patrol_route=route_data
-            )
+        out_dir, bounds, res, basename = self._get_export_context()
+        try:
+            route_data = Graph_Proccessing.main(out_dir)
+            if route_data:
+                auto_output_dir = os.path.join(out_dir, "Automated_Output")
+                UnitreeGo2Exporter(auto_output_dir).export_unitree_waypoints(
+                    nodes,
+                    edges,
+                    bounds,
+                    res,
+                    filename_prefix=basename,
+                    patrol_route=route_data
+                )
+        except Exception as e:
+            print(f"Error running GraphProcessor on '{out_dir}': {e}")
 
 
 if __name__ == "__main__":

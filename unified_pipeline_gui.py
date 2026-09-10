@@ -39,6 +39,7 @@ class UnifiedPipelineGUI:
         self.current_bounds = None
         self.current_occ_path = None
         self.file_basename = ""
+        self.current_output_dir = None
         
         self.setup_ui()
         
@@ -120,8 +121,9 @@ class UnifiedPipelineGUI:
     def _pipeline_thread(self, input_path):
         try:
             filename = os.path.basename(input_path)
-            self.file_basename = os.path.splitext(filename)[0]
+            self.file_basename = os.path.splitext(filename)[0].replace(" ", "_")
             output_dir = os.path.join(self.output_dir.get(), self.file_basename)
+            self.current_output_dir = output_dir
             if not os.path.exists(output_dir): os.makedirs(output_dir)
             
             # 1. Processing
@@ -184,6 +186,7 @@ class UnifiedPipelineGUI:
     def _extraction_thread(self):
         try:
             output_dir = os.path.join(self.output_dir.get(), self.file_basename)
+            self.current_output_dir = output_dir
             occ_path = os.path.join(output_dir, "obstacle_occupancy.png")
             park_json_path = os.path.join(output_dir, "orthomosaic_parking_spaces.json")
             
@@ -226,8 +229,12 @@ class UnifiedPipelineGUI:
             json_exp = JSONExporter(auto_output_dir)
             json_path = json_exp.export_graph(nodes, edges, self.current_bounds, self.resolution.get(), filename=f"{self.file_basename}_graph.json")
             
+            # Unitree Go2 Export
+            unitree_exp = UnitreeGo2Exporter(auto_output_dir)
+            unitree_exp.export_unitree_waypoints(nodes, edges, self.current_bounds, self.resolution.get(), filename_prefix=self.file_basename)
+
             self.root.after(0, lambda: self.display_graph(nodes, edges))
-            self.root.after(0, lambda: self.status_var.set(f"Graph extracted."))
+            self.root.after(0, lambda: self.status_var.set(f"Graph extracted & Unitree Go2 waypoints saved."))
 
             if self.on_graph_extracted:
                 self.root.after(0, lambda: self.on_graph_extracted(nodes, edges))

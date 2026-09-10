@@ -80,7 +80,14 @@ class UnitreeGo2Exporter:
         Exports waypoints for Unitree Go2 (G02) robot dog in JSON, YAML, and Python runner script.
         """
         if patrol_route is not None:
-            return self.export_patrol_route(patrol_route, filename_prefix=filename_prefix)
+            return self.export_patrol_route(
+                patrol_route,
+                filename_prefix=filename_prefix,
+                nodes=nodes,
+                edges=edges,
+                bounds=bounds,
+                resolution=resolution,
+            )
 
         cartesian_nodes = {}
         for node in nodes:
@@ -831,7 +838,7 @@ if __name__ == "__main__":
         print(f"Unitree Go2 runner script generated at {runner_path}")
         return runner_path
 
-    def export_patrol_route(self, route_data, filename_prefix="road_graph"):
+    def export_patrol_route(self, route_data, filename_prefix="road_graph", nodes=None, edges=None, bounds=None, resolution=None):
         """Export an ordered patrol route produced by the boundary router."""
         route = route_data.get('route', [])
         if not route:
@@ -874,10 +881,40 @@ if __name__ == "__main__":
             'route': route_data
         }
 
+        if bounds:
+            data['metadata']['map_bounds'] = bounds
+        if resolution:
+            data['metadata']['resolution'] = resolution
+
+        if nodes is not None:
+            cartesian_nodes = []
+            for node in nodes:
+                if bounds and resolution and 'x' in node and 'y' in node:
+                    mx = (node['x'] / resolution) + bounds['min_x']
+                    my = bounds['max_y'] - (node['y'] / resolution)
+                    cartesian_nodes.append({
+                        'id': node['id'],
+                        'x': round(mx, 4),
+                        'y': round(my, 4),
+                        'type': node.get('type', 'waypoint')
+                    })
+                else:
+                    cartesian_nodes.append(node)
+            data['nodes'] = cartesian_nodes
+
+        if edges is not None:
+            data['edges'] = edges
+
         os.makedirs(self.output_dir, exist_ok=True)
         graph_json_filename = f"{filename_prefix}_graph.json"
         graph_json_path = os.path.join(self.output_dir, graph_json_filename)
         with open(graph_json_path, 'w') as file:
             json.dump(data, file, indent=4)
+
+        if nodes and bounds and resolution:
+            try:
+                self.export_route_image(nodes, edges or [], bounds, resolution, filename_prefix)
+            except Exception as e:
+                print(f"Warning: Could not export route image: {e}")
 
         return self._generate_runner_script(graph_json_filename)
