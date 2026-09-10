@@ -181,11 +181,19 @@ class RobotLinePlotterApp:
                 print(f"Failed to load parking annotations preview: {e}")
 
         # Load existing robot route lines if available
-        route_json_path = os.path.join(base_dir, f"{base_name}_graph.json")
-        if not os.path.exists(route_json_path):
-            route_json_path = os.path.join(base_dir, "orthomosaic_graph.json")
+        carpark_name = os.path.basename(base_dir).replace(" ", "_")
+        route_candidates = [
+            os.path.join(base_dir, "Manual_Output", f"{carpark_name}_graph.json"),
+            os.path.join(base_dir, "Automated_Output", f"{carpark_name}_graph.json"),
+            os.path.join(base_dir, f"{carpark_name}_graph.json"),
+            os.path.join(base_dir, f"{base_name}_graph.json"),
+            os.path.join(base_dir, "Manual_Output", "orthomosaic_graph.json"),
+            os.path.join(base_dir, "Automated_Output", "orthomosaic_graph.json"),
+            os.path.join(base_dir, "orthomosaic_graph.json"),
+        ]
+        route_json_path = next((p for p in route_candidates if os.path.exists(p)), None)
 
-        if os.path.exists(route_json_path):
+        if route_json_path and os.path.exists(route_json_path):
             try:
                 with open(route_json_path, 'r') as f:
                     data = json.load(f)
@@ -423,6 +431,8 @@ class RobotLinePlotterApp:
 
         base_dir = os.path.dirname(self.image_path)
         base_name = os.path.splitext(os.path.basename(self.image_path))[0]
+        if base_name in ("orthomosaic", "output", ""):
+            base_name = os.path.basename(base_dir).replace(" ", "_")
         save_path = os.path.join(base_dir, f"{base_name}_graph.json")
 
         # Convert pixel lines to graph nodes/edges in metric coordinates

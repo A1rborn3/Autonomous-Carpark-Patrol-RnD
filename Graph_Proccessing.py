@@ -26,8 +26,17 @@ class GraphProcessor:
     def __init__(self, output_dir):
         self.output_dir = Path(output_dir)
 
+        # Normalize directory path (handling space vs underscore differences)
+        if not self.output_dir.exists():
+            alt_space = self.output_dir.parent / self.output_dir.name.replace("_", " ")
+            alt_under = self.output_dir.parent / self.output_dir.name.replace(" ", "_")
+            if alt_space.exists():
+                self.output_dir = alt_space
+            elif alt_under.exists():
+                self.output_dir = alt_under
+
         self.automated_graphs = sorted((self.output_dir / "Automated_Output").glob("*_graph.json"))
-        self.manual_graphs = sorted((self.output_dir / "Manual_Output").glob("*_graph.json"))
+        self.manual_graphs = sorted((self.output_dir / "Manual_Output").glob("*.json")) + sorted((self.output_dir / "Manuel_Output").glob("*.json"))
         self.graph_path = self.automated_graphs[0] if self.automated_graphs else (self.manual_graphs[0] if self.manual_graphs else None)
 
         if self.graph_path is None:
@@ -40,6 +49,9 @@ class GraphProcessor:
 
 
     def find_edges_per_node(self):
+        if self.graph_path is None or not os.path.exists(self.graph_path):
+            print(f"[GraphProcessor] Error: No valid graph file found in {self.output_dir}.")
+            return None
         
         print(f"Found: {self.graph_path}")
             
@@ -48,9 +60,9 @@ class GraphProcessor:
             
         all_edges = []
         for edges_data in data["edges"]:
-            edge_id = int(str(edges_data['id']).rsplit('_', 1)[1])
-            from_id = int(str(edges_data['from_id']).rsplit('_', 1)[1])
-            to_id = int(str(edges_data['to_id']).rsplit('_', 1)[1])
+            edge_id = int(edges_data['id'].split('_')[1])
+            from_id = int(edges_data['from_id'].split('_')[1])
+            to_id = int(edges_data['to_id'].split('_')[1])
             
             edge_instance = Edges(id=edge_id, from_id=from_id, to_id=to_id)
             all_edges.append(edge_instance)
@@ -63,7 +75,7 @@ class GraphProcessor:
 
         all_nodes = []
         for node_data in data["nodes"]:
-            node_id = int(str(node_data['id']).rsplit('_', 1)[1])
+            node_id = int(node_data['id'].split('_')[1]) 
             x = float(node_data['x'])
             y = float(node_data['y'])
             node_edges = [] 
@@ -85,7 +97,7 @@ class GraphProcessor:
 
         # Trigger the new boundary generation function
         self.generate_road_boundaries(all_nodes, all_edges)
-        return Routing.main(self.output_dir)
+        return Routing.main(output_dir=self.output_dir)
 
 
     def generate_road_boundaries(self, all_nodes, all_edges):
@@ -116,15 +128,11 @@ class GraphProcessor:
         occ_path = self.graph_path.parent / "occupancy_clean.png"
         if not occ_path.exists():
             occ_path = self.output_dir / "merged_occupancy.png"
-        if not occ_path.exists():
-            occ_path = self.output_dir / "obstacle_occupancy.png"
-        if not occ_path.exists():
-            occ_path = self.output_dir / "obstacle_occupancy.png"
             
         occupancy_img = cv2.imread(str(occ_path), cv2.IMREAD_GRAYSCALE)
         if occupancy_img is None:
             print("Error: Failed to load occupancy image.")
-            return None
+            return
 
         _, occ_bin = cv2.threshold(occupancy_img, 254, 255, cv2.THRESH_BINARY)
         dist_transform = cv2.distanceTransform(occ_bin, cv2.DIST_L2, 5)
@@ -375,9 +383,16 @@ class GraphProcessor:
 
         output_graph = {"nodes": boundary_nodes, "edges": boundary_edges}
 
-        output_path = self.output_dir / f"{self.graph_path.stem.replace('_graph', '')}_boundary_graph.json"
+        carpark_name = self.output_dir.name.replace(" ", "_")
+        output_path = self.output_dir / f"{carpark_name}_boundary_graph.json"
         with open(output_path, 'w') as f:
             json.dump(output_graph, f, indent=2)
+
+        # Backwards compatibility with Smart_Parking_Park_boundary_graph.json
+        legacy_path = self.output_dir / "Smart_Parking_Park_boundary_graph.json"
+        if output_path != legacy_path:
+            with open(legacy_path, 'w') as f:
+                json.dump(output_graph, f, indent=2)
             
         print(f"Successfully generated {len(boundary_nodes)} boundary nodes.")
         print(f"Saved to: {output_path}")
@@ -450,8 +465,6 @@ class GraphProcessor:
         occ_path = self.graph_path.parent / "occupancy_clean.png"
         if not occ_path.exists():
             occ_path = self.output_dir / "merged_occupancy.png"
-        if not occ_path.exists():
-            occ_path = self.output_dir / "obstacle_occupancy.png"
             
         occupancy_img = cv2.imread(str(occ_path), cv2.IMREAD_GRAYSCALE)
         if occupancy_img is None:
@@ -1276,8 +1289,6 @@ class GraphProcessor:
         occ_path = self.graph_path.parent / "occupancy_clean.png"
         if not occ_path.exists():
             occ_path = self.output_dir / "merged_occupancy.png"
-        if not occ_path.exists():
-            occ_path = self.output_dir / "obstacle_occupancy.png"
 
         occupancy_img = cv2.imread(str(occ_path), cv2.IMREAD_GRAYSCALE)
         if occupancy_img is None:
@@ -1365,15 +1376,20 @@ class GraphProcessor:
 
 
 def main(output_dir=None):
-    default_output = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output/Smart_Parking_Park")
-    parser = argparse.ArgumentParser(description="Run GraphProcessor (minimal runner)")
-    parser.add_argument("--output-dir", "-o", default=default_output, help="Path to output directory")
-    args = parser.parse_args([] if output_dir is not None else None)
-    if output_dir is not None:
-        args.output_dir = output_dir
+    if output_dir is None:
+        default_output = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output/Smart_Parking_Park")
+        if not os.path.exists(default_output):
+            default_output = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output/Smart Parking Park")
+        parser = argparse.ArgumentParser(description="Run GraphProcessor (minimal runner)")
+        parser.add_argument("--output-dir", "-o", default=default_output, help="Path to output directory")
+        args, _ = parser.parse_known_args()
+        output_dir = args.output_dir
 
-    print("Running GraphProcessor on:", args.output_dir)
-    gp = GraphProcessor(args.output_dir)
+    print("Running GraphProcessor on:", output_dir)
+    gp = GraphProcessor(output_dir)
+    if gp.graph_path is None:
+        print(f"[GraphProcessor] Aborting: No graph file found in {output_dir}")
+        return None
     return gp.find_edges_per_node()
 
 

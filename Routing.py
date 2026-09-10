@@ -577,62 +577,85 @@ class PatrolRouter:
         }
 
 
-def main(output_dir=None):
+def main(output_dir=None, entrance_side="perp_side_1"):
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Compute closed patrol route from boundary graph"
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=None,
-        help="Output directory (default: <script_dir>/output/Smart_Parking_Park)",
-    )
-    parser.add_argument(
-        "--entrance-side",
-        default="perp_side_1",
-        choices=["perp_side_1", "perp_side_2"],
-        help="Preferred entrance side",
-    )
+    if output_dir is None:
+        parser = argparse.ArgumentParser(
+            description="Compute closed patrol route from boundary graph"
+        )
+        parser.add_argument(
+            "--output-dir",
+            type=Path,
+            default=None,
+            help="Output directory (default: <script_dir>/output/Smart_Parking_Park)",
+        )
+        parser.add_argument(
+            "--entrance-side",
+            default=entrance_side,
+            choices=["perp_side_1", "perp_side_2"],
+            help="Preferred entrance side",
+        )
 
-    args = parser.parse_args([] if output_dir is not None else None)
+        args, _ = parser.parse_known_args()
+        output_dir = args.output_dir
+        entrance_side = args.entrance_side
 
     # Determine output directory
-    if output_dir is not None:
-        args.output_dir = Path(output_dir)
-    elif args.output_dir is None:
+    if output_dir is None:
         script_dir = Path(__file__).parent
-        args.output_dir = script_dir / "output" / "Smart_Parking_Park"
+        default_dir = script_dir / "output" / "Smart_Parking_Park"
+        if not default_dir.exists():
+            default_dir = script_dir / "output" / "Smart Parking Park"
+        output_dir = default_dir
     else:
-        args.output_dir = Path(args.output_dir)
+        output_dir = Path(output_dir)
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    # Normalize space vs underscore differences if needed
+    if not output_dir.exists():
+        alt_space = output_dir.parent / output_dir.name.replace("_", " ")
+        alt_under = output_dir.parent / output_dir.name.replace(" ", "_")
+        if alt_space.exists():
+            output_dir = alt_space
+        elif alt_under.exists():
+            output_dir = alt_under
 
-    print(f"[Routing] Output directory: {args.output_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load the boundary graph generated for this output directory. The graph
-    # basename depends on the input map, so do not assume Smart_Parking_Park.
-    boundary_graph_paths = sorted(args.output_dir.glob("*_boundary_graph.json"))
-    if not boundary_graph_paths:
-        raise FileNotFoundError(
-            f"Boundary graph not found in {args.output_dir}. "
-            "Run graph processing first to generate *_boundary_graph.json."
-        )
-    boundary_graph_path = boundary_graph_paths[0]
+    print(f"[Routing] Output directory: {output_dir}")
+
+    # Load boundary graph
+    boundary_graph_path = None
+    candidates = sorted(output_dir.glob("*_boundary_graph.json"))
+    if candidates:
+        boundary_graph_path = candidates[0]
+    else:
+        for fallback_name in [
+            f"{output_dir.name}_boundary_graph.json",
+            f"{output_dir.name.replace(' ', '_')}_boundary_graph.json",
+            "Smart_Parking_Park_boundary_graph.json",
+        ]:
+            p = output_dir / fallback_name
+            if p.exists():
+                boundary_graph_path = p
+                break
+
+    if not boundary_graph_path or not boundary_graph_path.exists():
+        print(f"[Routing] ERROR: Boundary graph not found in {output_dir}")
+        return None
 
     print(f"[Routing] Loading boundary graph from {boundary_graph_path}")
     with open(boundary_graph_path) as f:
         boundary_graph = json.load(f)
 
-    # Load the main graph (optional), preferring the automated graph.
+    # Load main graph (optional)
     main_graph = None
-    main_graph_paths = [
-        sorted((args.output_dir / "Automated_Output").glob("*_graph.json")),
-        sorted((args.output_dir / "Manual_Output").glob("*_graph.json")),
-    ]
-    for graph_paths in main_graph_paths:
-        if graph_paths:
-            main_graph_path = graph_paths[0]
+    auto_graphs = sorted((output_dir / "Automated_Output").glob("*_graph.json"))
+    manual_graphs = sorted((output_dir / "Manual_Output").glob("*.json")) + sorted((output_dir / "Manuel_Output").glob("*.json"))
+    for main_graph_path in auto_graphs + manual_graphs + [
+        output_dir / "Automated_Output" / "Smart_Parking_Park_graph.json",
+        output_dir / "Manual_Output" / "Smart_Parking_Park_graph.json",
+    ]:
+        if main_graph_path.exists():
             print(f"[Routing] Loading main graph from {main_graph_path}")
             with open(main_graph_path) as f:
                 main_graph = json.load(f)
@@ -640,16 +663,23 @@ def main(output_dir=None):
 
     # Compute route
     router = PatrolRouter(boundary_graph, main_graph)
-    main_route, unconnected = router.compute_route(args.entrance_side)
+    main_route, unconnected = router.compute_route(entrance_side)
 
     # Build output
     output_data = router.build_output()
 
     # Save JSON
-    output_json_path = args.output_dir / "patrol_route.json"
+    output_json_path = output_dir / "patrol_route.json"
     with open(output_json_path, "w") as f:
         json.dump(output_data, f, indent=2)
     print(f"[Routing] Saved route to {output_json_path}")
+
+    # Also save with normalized carpark name prefix
+    carpark_name = output_dir.name.replace(" ", "_")
+    named_route_path = output_dir / f"{carpark_name}_patrol_route.json"
+    if named_route_path != output_json_path:
+        with open(named_route_path, "w") as f:
+            json.dump(output_data, f, indent=2)
 
     # Validate
     print("[Routing] Validating output...")
