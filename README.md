@@ -138,12 +138,6 @@ Common generated files include:
 - `run_go2_patrol.py` — exported execution script for robot patrol navigation
 - `*_final_route.png` — visualized route overlay image
 
-## Notes
-
-- The GUI is the intended user interface for this project and is the most accurate description of the current pipeline.
-- The older command-line usage shown in earlier versions of this repository is no longer the primary interface.
-- If you are working with a dataset, the workflow is best executed through the GUI so that annotations, route definitions, and exported graphs remain synchronized with the generated map metadata.
-
 ## License
 
 This project is intended for research and autonomous navigation development use within the repository context. It is unlicenced and in the public domain.
