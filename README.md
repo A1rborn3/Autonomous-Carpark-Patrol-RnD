@@ -8,6 +8,11 @@ It is designed around a desktop GUI workflow rather than a single command-line s
 2. Parking annotator for parking spaces and access points
 3. Robot route plotting and graph export
 
+##Repository link
+
+[Autonomous Carpark Patrol](https://github.com/A1rborn3/Autonomous-Carpark-Patrol-RnD.git)
+ 
+
 ## What the project does
 
 - Loads `.ply` point cloud data and extracts ground and obstacle points
@@ -141,5 +146,5 @@ Common generated files include:
 
 ## License
 
-This project is intended for research and autonomous navigation development use within the repository context. Check the repository status and any project-specific licensing terms before redistribution or commercial deployment.
+This project is intended for research and autonomous navigation development use within the repository context. It is unlicenced and in the public domain.
 
